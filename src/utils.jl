@@ -2,9 +2,10 @@
 utils.jl
 =#
 
-ST(x,τ) = sign.(x).*max.(abs.(x).-τ, 0);       # soft-thresholding
+ST(x,τ) = sign.(x).*max.(0, abs.(x).-τ);       # soft-thresholding
 pixeldot(x,y) = sum(x.*y, dims=(3,4))          # dot-product of 4D pixel vectors
 pixelnorm(x) = sqrt.(sum(abs2, x, dims=(3,4))) # 2-norm on 4D image-tensor pixel-vectors
+BT(x,τ) = max.(0, 1 .- τ./pixelnorm(x)).*x     # Block-thresholding of 4D pixel vectors
 
 function pixelmatvec(A,x)
 	M, N, C, B = size(A)
@@ -148,11 +149,13 @@ Wimg[x] = img[x + v]
 """
 function backward_warp(img::Array{T,4}, v) where {T}
 	Wimg = similar(img)
-	itp  = OnCell()|>Natural|>Cubic|>BSpline
-	Iimg = extrapolate(interpolate(img[:,:,1,1], itp), 0)
-	for i=1:size(Wimg,1), j=1:size(Wimg,2)
-		vx = [i; j] .+ v[i,j,1,:]
-		Wimg[i,j,1,1] = Iimg(vx...)
+	for i=1:size(img,3), j=1:size(img,4)
+		itp  = OnCell()|>Natural|>Cubic|>BSpline
+		Iimg = extrapolate(interpolate(img[:,:,i,j], itp), 0)
+		for m=1:size(Wimg,1), n=1:size(Wimg,2)
+			vx = [m; n] .+ v[m,n,1,:]
+			Wimg[m,n,i,j] = Iimg(vx...)
+		end
 	end
 	return Wimg
 end
