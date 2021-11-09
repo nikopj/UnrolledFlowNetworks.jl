@@ -9,37 +9,35 @@ I₀ = ufn.tensorload(joinpath(root,"00019.jpg"), gray=true)
 I₁ = ufn.tensorload(joinpath(root,"00020.jpg"), gray=true)
 @show size(I₀)
 
+λ = 30
 J = 5
+maxwarp = 2
+maxit   = 1500
+tol = 1e-4
 pad = ufn.calcpad(size(I₀)[1:2], 2^J)
 I₀ᵖ = pad_reflect(I₀, pad, dims=(1,2))
 I₁ᵖ = pad_reflect(I₁, pad, dims=(1,2))
-@show size(I₀ᵖ)
-v, H = ufn.optical_flow(I₀ᵖ, I₁ᵖ, 20, J)
 
-#K = ufn.gaussiankernel(eltype(I₀), 1)
-#p = (size(K,1)-1) ÷ 2
-#
-#for i=1:3
-#	global I₀, I₁
-#	I₀ = conv(I₀, K; stride=2, pad=p)
-#	I₁ = conv(I₁, K; stride=2, pad=p)
-#end
-#@show size(I₀)
-#
-#W, _ = ufn.fdkernel(eltype(I₀))
-#D(x) = conv(pad_constant(x, (1,0,1,0), dims=(1,2)), W);
-#
-#∇I = D(I₀)
-#Iₜ = I₁ - I₀
-#
-#v, r = ufn.TVL1(∇I, Iₜ, 20; maxit=1000, tol=1e-4)
+# v back-warps I1 to I0
+v = ufn.flowctf(I₀ᵖ, I₁ᵖ, λ, J; maxwarp=maxwarp, maxit=maxit, tol=tol)
+# ṽ back-warps I0 to I1
+ṽ = ufn.flowctf(I₁ᵖ, I₀ᵖ, λ, J; maxwarp=maxwarp, maxit=maxit, tol=tol)
 
-WI₁ = ufn.backward_warp(I₁ᵖ[:,:,1,1], v) |> x->reshape(x, size(x)...,1,1)
+Wṽ₁ = ufn.backward_warp(ṽ[:,:,:,1:1], v)
+Wṽ₂ = ufn.backward_warp(ṽ[:,:,:,2:2], v) 
+Wṽ  = cat(Wṽ₁, Wṽ₂, dims=4)
+
+error_v = ufn.pixelnorm(v - Wṽ)
+mask = error_v .< 5
+
+WI₁ = ufn.backward_warp(I₁ᵖ, v) 
+WI₀ = ufn.backward_warp(I₀ᵖ, ṽ) 
 x = cat(I₀ᵖ, WI₁, I₁ᵖ, dims=3);
+y = cat(I₀ᵖ, WI₀, I₁ᵖ, dims=3);
 
-# vc = v[:,:,1,1] + im*v[:,:,2,1]
-# println(maximum(abs.(vc)))
-# println(minimum(abs.(vc)))
+color_v = colorflow(permutedims(v[:,:,1,:], (3,1,2)));
+color_ṽ = colorflow(permutedims(ṽ[:,:,1,:], (3,1,2)));
+color_Wṽ = colorflow(permutedims(Wṽ[:,:,1,:], (3,1,2)));
+color = cat(color_v, color_Wṽ, color_ṽ, dims=3)
 
-#plot(colorflow(permutedims(v[:,:,:,1], (3,1,2))))
 

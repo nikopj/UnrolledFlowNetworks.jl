@@ -23,90 +23,120 @@ function powermethod(A::Function, b::AbstractArray; maxit=100, tol=1e-3, verbose
 	return λ, b, flag
 end
 
-function TVL1(a, b, λ, init=missing; maxit=100, tol=1e-2, verbose=true)
-	M, N, P, _ = size(a)
-	a = permutedims(a, (1,2,4,3)) # move channels into batch dimension
+function TVL1_BCA(I₀, I₁, λ, v̄=missing; maxit=100, tol=1e-2, verbose=true)
+	M, N = size(I₀)[1:2]
+
+	W, Wᵀ = cdkernel(eltype(I₀))
+	D(v) = conv(v, W; pad=1);
+	Dᵀ(w)= conv(w, Wᵀ; pad=1);
+
+	if ismissing(v̄)
+		v̄ = zeros(M,N,1,2)
+	end
+	∇I₁ = D(I₁) |> x-> permutedims(x, (1,2,4,3))
+	b   = I₁ - I₀ - pixeldot(∇I₁, v̄)
 	
-	#objfun = (x, Dx) -> norm(pixelnorm(Dx),1) + λ*norm(pixeldot(a,x).+b,1)
 	τ = 0.99 / sqrt(8)
 	σ = 0.99 / sqrt(8)
 
-	α = pixeldot(a,a)
-	ā = a./(α .+ 1e-7)
+	α = pixeldot(∇I₁,∇I₁)
+	a = ∇I₁./(α .+ 1e-7)
 	η = τ*λ*α
 
-	W, Wᵀ = fdkernel(eltype(a))
-	D(x) = conv(pad_constant(x, (1,0,1,0), dims=(1,2)), W);
-	Dᵀ(y)= conv(pad_constant(y, (0,1,0,1), dims=(1,2)), Wᵀ);
-
-	if !ismissing(init)
-		x, y = init
-	else
-		x = zeros(M,N,1,2) # primal var
-		y = zeros(M,N,2,2) # dual var
-	end
+	v = copy(v̄)        # primal var
+	w = zeros(M,N,2,2) # dual var
 	r = zeros(maxit)   # primal residual
-	#obj = zeros(maxit)   # primal residual
 	
 	k = 0
 	while k == 0 || k < maxit && r[k] > tol
-
 		# proximal gradient descent on primal
-		z = x .- τ*Dᵀ(y)
-		ρ = pixeldot(a, z) .+ b
-		xᵏ = z .+ ā.*(ST(ρ, η) .- ρ)   # x <- prox_τF(z)
+		x = v .- τ*Dᵀ(w)
+		ρ = pixeldot(∇I₁, x) .+ b
+		vᵏ = x .+ a.*(ST(ρ, η) .- ρ)   # v <- prox_τf(x)
 
 		# proximal gradient ascent on dual
-		w = y .+ σ*D(2xᵏ - x)
-		#y = min.(1, max.(-1, w))
-		y = w ./ max.(1, pixelnorm(w)) # y <- prox_σG*(w)
+		y = w .+ σ*D(2vᵏ - v)
+		w = y ./ max.(1, pixelnorm(y)) # w <- prox_σg∗(y)
 
 		k += 1
-		r[k] = norm(xᵏ - x)/norm(xᵏ)
-		x = xᵏ
-		#obj[k] = objfun(x, D(x))
+		r[k] = norm(vᵏ - v)/norm(vᵏ)
+		v = vᵏ
 		if verbose
-			@printf "k: %3d | r= %.3e | obj= %.3e \n" k r[k] obj[k]
+			@printf "k: %3d | r= %.3e \n" k r[k] 
 		end
 	end
-	return permutedims(x, (1,2,4,3)), y, r[1:k]
+	return v, r[1:k]
 end
 
-function optical_flow(I₀::Array{T,N}, I₁::Array{T,N}, λ, J) where {T,N}
-	# compute gaussian pyramid
-	# iterative: solve, upscale, warp, repeat
-	K = gaussiankernel(T,1)
-	S, _ = sobelkernel(T)
-	B(x) = conv(x, K; stride=2, pad=(size(K,1)-1)÷2)
-	D(x) = conv(x, S; pad=1)
-	H = []
-	V = []
+function TVL1_VCA(I₀, I₁, λ, v̄=missing; maxit=100, tol=1e-2, verbose=true)
+	M, N, C, _ = size(I₀)
+
+	W, Wᵀ = cdkernel(eltype(I₀))
+	D(v) = conv(v, W; pad=1);
+	Dᵀ(w)= conv(w, Wᵀ; pad=1);
+
+	if ismissing(v̄)
+		v̄ = zeros(M,N,1,2)
+	end
+
+	# pixel-vector in dim 3, vertical/horizontal gradient in dim 4
+	∇I₁ᵀ = D(permutedims(I₁, (1,2,4,3))) |> x-> permutedims(x, (1,2,4,3))
+	b    = I₁ - I₀ - pixelmatvec(∇I₁ᵀ, permutedims(v̄, (1,2,4,3)))
 	
-	BI = [(I₀,I₁)]
-	for j ∈ 1:J
-		push!(BI, B.(BI[j]))
-	end
-	for j ∈ J+1:-1:1
-		if j==J+1
-			Upv = 0
-			WI = BI[j][2]
-			init = missing
-		else
-			global v, ṽ, w
-			Upv = 2*upsample_bilinear(v, (2,2))
-			ṽ = upsample_bilinear(permutedims(ṽ,(1,2,4,3)), (2,2))
-			w = upsample_bilinear(w, (2,2))
-			WI = backward_warp(BI[j][2][:,:,1,1], Upv)
-			WI = reshape(WI, size(WI)..., 1,1)
-			init = (ṽ,w)
+	τ = 0.99 / sqrt(8)
+	σ = 0.99 / sqrt(8)
+
+	v = copy(v̄)        # primal var
+	w = zeros(M,N,2,2) # dual var
+	r = zeros(maxit)   # primal residual
+	
+	k = 0
+	while k == 0 || k < maxit && r[k] > tol
+		# proximal gradient descent on primal
+		x = v .- τ*Dᵀ(w)
+		ρ = pixeldot(∇I₁, x) .+ b
+		vᵏ = x .+ a.*(ST(ρ, η) .- ρ)   # v <- prox_τf(x)
+
+		# proximal gradient ascent on dual
+		y = w .+ σ*D(2vᵏ - v)
+		w = y ./ max.(1, pixelnorm(y)) # w <- prox_σg∗(y)
+
+		k += 1
+		r[k] = norm(vᵏ - v)/norm(vᵏ)
+		v = vᵏ
+		if verbose
+			@printf "k: %3d | r= %.3e \n" k r[k] 
 		end
-		∇I = D(BI[j][1])
-		Iₜ = WI .- BI[j][1]
-		ṽ, w, r = TVL1(∇I, Iₜ, λ, init; maxit=500, tol=1e-3, verbose=false)
-		v = ṽ .+ Upv
-		h = (r[end], length(r))
-		@show j h
-		push!(H, h)
 	end
-	return v, H
+	return v, r[1:k]
+end
+
+function flowctf(I₀::Array{T,N}, I₁::Array{T,N}, λ, J; maxwarp=0, verbose=true, tol=1e-3, maxit=100) where {T,N}
+	# construct gaussian pyramid 
+	h = gaussiankernel(T,1)
+	H(x) = conv(x, h; stride=2, pad=(size(h,1)-1)÷2)
+	pyramid = [(I₀,I₁)]
+	for j ∈ 2:J
+		push!(pyramid, H.(pyramid[j-1]))
+	end
+
+	# iterative warp and TVL1, coarse-to-fine
+	v = zeros(size(pyramid[J][1])[1:2]..., 1, 2)
+	for j ∈ J:-1:1
+		i = 0; s = 0
+		while i == 0 || i < maxwarp && s > tol
+			WI₁ = backward_warp(pyramid[j][2], v)
+			vⁱ, r = TVL1_BCA(pyramid[j][1], WI₁, λ, v; maxit=maxit, tol=tol, verbose=false)
+			s = norm(vⁱ - v)/norm(vⁱ)
+			if verbose
+				@printf "j= %02d | i= %02d | s= %.2e | k= %03d | r= %.2e \n" j-1 i s length(r) r[end]
+			end
+			i += 1
+			v = vⁱ
+		end
+		if j > 1
+			v = 2*upsample_bilinear(v, (2,2))
+		end
+	end
+	return v
 end
