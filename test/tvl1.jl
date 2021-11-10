@@ -9,9 +9,9 @@ I₀ = ufn.tensorload(joinpath(root,"00019.jpg"), gray=false)
 I₁ = ufn.tensorload(joinpath(root,"00020.jpg"), gray=false)
 @show size(I₀)
 
-λ = 0.02
+λ = 3e-2
 J = 5
-maxwarp = 2
+maxwarp = 3
 maxit   = 1000
 tol = 1e-3
 pad = ufn.calcpad(size(I₀)[1:2], 2^J)
@@ -29,7 +29,7 @@ mask = error_v .< 7
 
 WI₁ = ufn.backward_warp(I₁ᵖ, v) 
 WI₀ = ufn.backward_warp(I₀ᵖ, ṽ) 
-x = cat(tensor2img.((I₀ᵖ, WI₁, WI₀, I₁ᵖ))..., dims=3);
+x = cat(ufn.tensor2img.((I₀ᵖ, WI₁, WI₀, I₁ᵖ))..., dims=3);
 
 maxflow = maximum(cat(ufn.pixelnorm.((v,Wṽ,ṽ))..., dims=3))
 color_v = colorflow(permutedims(v[:,:,1,:], (3,1,2)), maxflow);

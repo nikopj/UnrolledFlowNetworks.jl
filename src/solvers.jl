@@ -68,7 +68,7 @@ function TVL1_BCA(I₀, I₁, λ, v̄=missing; maxit=100, tol=1e-2, verbose=true
 	return v, r[1:k]
 end
 
-function TVL1_VCA(I₀, I₁, λ, v̄=missing; maxit=100, tol=1e-2, verbose=true)
+function TVL1_VCA(I₀::Array{T,X}, I₁::Array{T,X}, λ, v̄=missing; maxit=100, tol=1e-2, verbose=true) where {T,X}
 	M, N, C, _ = size(I₀)
 
 	W, Wᵀ = cdkernel(eltype(I₀))
@@ -76,50 +76,62 @@ function TVL1_VCA(I₀, I₁, λ, v̄=missing; maxit=100, tol=1e-2, verbose=true
 	Dᵀ(w)= conv(w, Wᵀ; pad=1);
 
 	if ismissing(v̄)
-		v̄ = zeros(M,N,1,2)
+		v̄ = zeros(T,M,N,1,2)
 	end
+	v = copy(v̄)        # primal var
+	w = zeros(T, M,N,2,2) # dual var
+	z = zeros(T, M,N,1,C)
+	u = zeros(T, M,N,1,C)
+	r = zeros(T, maxit)   # primal residual
 
-	τ = 0.99 / sqrt(8)
-	σ = 0.99 / sqrt(8)
-	ρ = 2
+	λ = T(λ)
+	τ = T(0.99 / sqrt(8))
+	σ = T(0.99 / sqrt(8))
+	ρ = T(2)
 
+	# ADMM init
 	# pixel-vector in dim 3, vertical/horizontal gradient in dim 4
 	∇I₁ᵀ = D(permutedims(I₁, (1,2,4,3))) |> x-> permutedims(x, (1,2,4,3))
-	b    = I₁ .- I₀ .- pixelmatvec(∇I₁ᵀ, permutedims(v̄, (1,2,4,3)))
+	@ein b[m,n,i,j] := ∇I₁ᵀ[m,n,i,k]*v̄[m,n,j,k]
+	b = I₁ .- I₀ .- b |> x-> permutedims(x, (1,2,4,3))
 
+	Avᵏ = zeros(T, M,N,1,C)
+	t   = zeros(T, M,N,1,2)
 	A = ∇I₁ᵀ
 	Aᵀ = permutedims(∇I₁ᵀ, (1,2,4,3))
-	eyemat = zeros(M,N,2,2)
+	eyemat = zeros(T, M,N,2,2)
 	eyemat[:,:,1,1] .= 1; eyemat[:,:,2,2] .= 1
 
-	B  = eyemat .+ τ*ρ*pixelmatmul(Aᵀ,A)
+	@ein B[m,n,i,j] := Aᵀ[m,n,i,k]*A[m,n,k,j]
+	B = eyemat .+ T(τ*ρ)*B 
 	B⁻ = similar(B)
 	d  = B[:,:,1,1].*B[:,:,2,2] .- B[:,:,1,2].*B[:,:,2,1]
 	B⁻[:,:,1,1] = B[:,:,2,2]
 	B⁻[:,:,2,2] = B[:,:,1,1]
 	B⁻[:,:,1,2] = -B[:,:,1,2]
 	B⁻[:,:,2,1] = -B[:,:,2,1]
-	B⁻ = B⁻./(d .+ 1e-16)
-
-	v = copy(v̄)        # primal var
-	w = zeros(M,N,2,2) # dual var
-	r = zeros(maxit)   # primal residual
+	B⁻ = B⁻./d
 	
 	k = 0
 	while k == 0 || k < maxit && r[k] > tol
 		# proximal gradient descent on primal
 		x = v .- τ*Dᵀ(w)
-		vᵏ, s = pixelADMM(x, A, Aᵀ, B⁻, b, ρ, τ; maxit=2, tol=1e-3, verbose=false) # v<-prox_τf(x)
+		@ein t[m,n,j,i] := Aᵀ[m,n,i,k] * (b.-z.+u)[m,n,j,k]
+		t = x .- τ*ρ*t
+		@ein vᵏ[m,n,j,i]  := B⁻[m,n,i,k] * t[m,n,j,k]
+		@ein Avᵏ[m,n,j,i] := A[m,n,i,k] * vᵏ[m,n,j,k]
+		z = BT(Avᵏ .+ b .+ u, 1/ρ)
+		u = u .+ Avᵏ .+ b .- z
 
 		# proximal gradient ascent on dual
 		y = w .+ σ*D(2vᵏ - v)
-		w = y ./ max.(1, pixelnorm(y)./λ) # w <- prox_σg∗(y)
+		w = y ./ max.(one(T), pixelnorm(y)./λ) # w <- prox_σg∗(y)
 
 		k += 1
 		r[k] = norm(vᵏ - v)/norm(vᵏ)
 		v = vᵏ
 		if verbose
-			@printf "k: %03d | r= %.3e | length(s)= %02d | s= %.2e \n" k r[k] length(s) s[end]
+			@printf "k: %03d | r= %.3e \n" k r[k] 
 		end
 	end
 	return v, r[1:k]
@@ -160,7 +172,7 @@ function flowctf(I₀, I₁, λ, J; maxwarp=0, verbose=true, tol=1e-3, maxit=100
 	end
 
 	# construct gaussian pyramid 
-	h = gaussiankernel(T,1)
+	h = gaussiankernel(eltype(I₀),1)
 	H(x) = permutedims(x, (1,2,4,3)) |> x->conv(x, h; stride=2, pad=(size(h,1)-1)÷2) |> x->permutedims(x, (1,2,4,3))
 	pyramid = [(I₀,I₁)]
 	for j ∈ 2:J
@@ -168,7 +180,7 @@ function flowctf(I₀, I₁, λ, J; maxwarp=0, verbose=true, tol=1e-3, maxit=100
 	end
 
 	# iterative warp and TVL1, coarse-to-fine
-	v = zeros(size(pyramid[J][1])[1:2]..., 1, 2)
+	v = zeros(eltype(I₀), size(pyramid[J][1])[1:2]..., 1, 2)
 	for j ∈ J:-1:1
 		i = 0; s = 0
 		while i == 0 || i < maxwarp && s > tol

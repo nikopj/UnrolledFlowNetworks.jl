@@ -1,7 +1,7 @@
 module UnrolledFlowNetworks
 
 using NNlib, Statistics, LinearAlgebra, FFTW
-using Interpolations
+using Interpolations, OMEinsum
 using Images, Printf, FileIO
 
 include("utils.jl")

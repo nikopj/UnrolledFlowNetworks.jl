@@ -1,7 +1,6 @@
 # Unrolled Primal Dual Spliting for Optical Flow Estimation
 
 ## TODO
-- convert pixelwise functions to using Einsum.jl or TensorOperations.jl
 - code error/loss functions (endpoint error, etc.)
 - write dataloader for sintel, kitti, flying things, middleburry
 - unroll TVL1\_BCA and TVL1\_VCA
