@@ -26,9 +26,9 @@ end
 function TVL1_BCA(I₀, I₁, λ, v̄=missing; maxit=100, tol=1e-2, verbose=true)
 	M, N = size(I₀)[1:2]
 
-	W, Wᵀ = cdkernel(eltype(I₀))
-	D(v) = conv(v, W; pad=1);
-	Dᵀ(w)= conv(w, Wᵀ; pad=1);
+	W, Wᵀ = fdkernel(eltype(I₀))
+	D(x) = conv(pad_constant(x, (1,0,1,0), dims=(1,2)), W);
+	Dᵀ(z)= conv(pad_constant(z, (0,1,0,1), dims=(1,2)), Wᵀ);
 
 	if ismissing(v̄)
 		v̄ = zeros(M,N,1,2)
@@ -71,14 +71,14 @@ end
 function TVL1_VCA(I₀::Array{T,X}, I₁::Array{T,X}, λ, v̄=missing; maxit=100, tol=1e-2, verbose=true) where {T,X}
 	M, N, C, _ = size(I₀)
 
-	W, Wᵀ = cdkernel(eltype(I₀))
-	D(v) = conv(v, W; pad=1);
-	Dᵀ(w)= conv(w, Wᵀ; pad=1);
+	W, Wᵀ = fdkernel(eltype(I₀))
+	D(x) = conv(pad_constant(x, (1,0,1,0), dims=(1,2)), W);
+	Dᵀ(z)= conv(pad_constant(z, (0,1,0,1), dims=(1,2)), Wᵀ);
 
 	if ismissing(v̄)
 		v̄ = zeros(T,M,N,1,2)
 	end
-	v = copy(v̄)        # primal var
+	v = copy(v̄)           # primal var
 	w = zeros(T, M,N,2,2) # dual var
 	z = zeros(T, M,N,1,C)
 	u = zeros(T, M,N,1,C)
@@ -116,7 +116,7 @@ function TVL1_VCA(I₀::Array{T,X}, I₁::Array{T,X}, λ, v̄=missing; maxit=100
 	while k == 0 || k < maxit && r[k] > tol
 		# proximal gradient descent on primal
 		x = v .- τ*Dᵀ(w)
-		@ein t[m,n,j,i] := Aᵀ[m,n,i,k] * (b.-z.+u)[m,n,j,k]
+		@ein t[m,n,j,i]   := Aᵀ[m,n,i,k] * (b.-z.+u)[m,n,j,k]
 		t = x .- τ*ρ*t
 		@ein vᵏ[m,n,j,i]  := B⁻[m,n,i,k] * t[m,n,j,k]
 		@ein Avᵏ[m,n,j,i] := A[m,n,i,k] * vᵏ[m,n,j,k]
@@ -137,33 +137,7 @@ function TVL1_VCA(I₀::Array{T,X}, I₁::Array{T,X}, λ, v̄=missing; maxit=100
 	return v, r[1:k]
 end
 
-function pixelADMM(v, A, Aᵀ, B⁻, b, ρ, τ; maxit=100, tol=1e-3, verbose=false) 
-	M, N, C, _ = size(A)
-
-	V = norm(v)
-	r = zeros(maxit)
-	v = permutedims(v, (1,2,4,3))
-	x = zeros(M,N,2,1)
-	z = zeros(M,N,C,1)
-	u = zeros(M,N,C,1)
-
-	k = 0
-	while k == 0 || k < maxit && r[k] > tol
-		x = pixelmatmul(B⁻, v .- τ*ρ*pixelmatmul(Aᵀ, b.- z.+u))
-		Ax = pixelmatmul(A,x)
-		z = BT(Ax .+ b .+ u, 1/ρ)
-		t = Ax .+ b .- z
-		u = u .+ t
-		k += 1
-		r[k] = maximum(pixelnorm(t))
-		if verbose
-			@printf "k: %3d | r= %.3e \n" k r[k] 
-		end
-	end
-	return permutedims(x, (1,2,4,3)), r[1:k]
-end
-
-function flowctf(I₀, I₁, λ, J; maxwarp=0, verbose=true, tol=1e-3, maxit=100)
+function flowctf(I₀, I₁, λ, J; maxwarp=0, verbose=true, tol=1e-3, maxit=100, tolwarp=1e-4)
 	C = size(I₀,3)
 	if C == 1
 		TVL1 = TVL1_BCA
@@ -183,7 +157,7 @@ function flowctf(I₀, I₁, λ, J; maxwarp=0, verbose=true, tol=1e-3, maxit=100
 	v = zeros(eltype(I₀), size(pyramid[J][1])[1:2]..., 1, 2)
 	for j ∈ J:-1:1
 		i = 0; s = 0
-		while i == 0 || i < maxwarp && s > tol
+		while i == 0 || i < maxwarp && s > tolwarp
 			WI₁ = backward_warp(pyramid[j][2], v)
 			vⁱ, r = TVL1(pyramid[j][1], WI₁, λ, v; maxit=maxit, tol=tol, verbose=false)
 			s = norm(vⁱ - v)/norm(vⁱ)

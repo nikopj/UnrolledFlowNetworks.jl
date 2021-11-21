@@ -1,0 +1,30 @@
+opt:
+  η: 0.001
+train:
+  savedir: "models/BCANet-test"
+  γ: 0.95
+  clipnorm: 1
+  verbose: true
+  W: 0
+  β: 0.8
+  Δval: 5
+  epochs: 50
+  Δsched: 5
+  δ: 0.5
+  β: 0.5
+ckpt: 
+net:
+  - 10
+  - 8
+  - 5
+  - 2
+  - 1e-1
+data:
+  params:
+    σ: 1
+    batch_size: 1
+    J: 0
+    crop_size: 256
+    gray: true
+    scale: 2
+  root: "/home/nikopj/dataset/MPI_Sintel/"

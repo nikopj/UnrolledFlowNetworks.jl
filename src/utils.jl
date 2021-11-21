@@ -7,63 +7,6 @@ pixeldot(x,y) = sum(x.*y, dims=(3,4))          # dot-product of 4D pixel vectors
 pixelnorm(x) = sqrt.(sum(abs2, x, dims=(3,4))) # 2-norm on 4D image-tensor pixel-vectors
 BT(x,τ) = max.(0, 1 .- τ./pixelnorm(x)).*x     # Block-thresholding of 4D pixel vectors
 
-function pixelmatvec(A,x)
-	M, N, C, B = size(A)
-	y = zeros(eltype(A), M, N, C, 1)
-	for m=1:size(A,1), n=1:size(A,2)
-		y[m,n,:,1] = A[m,n,:,:] * x[m,n,:,1]
-	end
-	return y
-end
-
-function pixelmatmul(A,G)
-	M, N, C₁, B = size(A)
-	M, N, B, C₂ = size(G)
-	D = zeros(eltype(A), M, N, C₁, C₂)
-	for m=1:size(A,1), n=1:size(A,2)
-		D[m,n,:,:] = A[m,n,:,:] * G[m,n,:,:]
-	end
-	return D
-end
-
-#=============================================================================
-                            Image <-> Tensor
-=============================================================================#
-
-function tensor2img(A::Array{<:Real,2})
-	tensor2img(Gray, A)
-end
-
-function tensor2img(A::Array{<:Real,4})
-	if size(A)[3] == 1
-		return tensor2img(A[:,:,1,1])
-	end
-	return tensor2img(RGB, permutedims(A[:,:,:,1], (3,1,2)))
-end
-
-function tensor2img(ctype, A::Array{<:Real}) 
-	reinterpret(reshape, ctype{N0f8}, N0f8.(clamp.(A,0,1)))
-end
-
-function img2tensor(A)
-	B = Float32.(reinterpret(reshape, N0f8, A) |> collect)
-	if ndims(B) == 3
-		B = permutedims(B, (2,3,1))
-		B = reshape(B, size(B)..., 1)
-	elseif ndims(B) == 2
-		B = reshape(B, size(B)..., 1, 1)
-	end
-	return B
-end
-
-function tensorload(path; gray=false)
-	img = load(path)
-	if gray
-		img = Gray.(img)
-	end
-	img2tensor(img)
-end
-
 #=============================================================================
                      Preprocessing and Postprocessing
 =============================================================================#
@@ -81,16 +24,15 @@ function unpad(x::AbstractArray, pad::NTuple{4,Int})
 	@view x[begin+pad[1]:end-pad[2], begin+pad[3]:end-pad[4], :, :]
 end
 
-function preprocess(y::AbstractArray, stride::Int)
-	pad = calcpad(size(y)[1:2], stride)
-	yₚ = pad_reflect(y, pad, dims=(1,2))
-	μ = mean(yₚ, dims=(1,2))
-	return yₚ .- μ, (μ, pad)
+function preprocess(I₀::AbstractArray, I₁::AbstractArray, stride::Int)
+	pad = calcpad(size(I₀)[1:2], stride)
+	I₀ᵖ, I₁ᵖ = (I₀, I₁) .|> x->pad_reflect(x, pad, dims=(1,2))
+	μ = mean(I₀ᵖ.+I₁ᵖ, dims=(1,2))./2
+	return I₀ᵖ.-μ, I₁ᵖ.-μ, (μ, pad)
 end
 
 function postprocess(xₚ::AbstractArray, params)
-	μ, pad = params
-	return unpad(xₚ .+ μ, pad)
+	return unpad(xₚ .+ params[1], params[2])
 end
 
 #=============================================================================
@@ -120,8 +62,16 @@ function gaussiankernel(T::Type, σ, m=ceil(Int,6σ-1))
 	end
 	return K./sum(K)
 end
-
 gaussiankernel(σ, m=ceil(Int,6σ-1)) = gaussiankernel(Float32, σ, m)
+
+function ConvGaussian(σ; stride=1)
+	h = gaussiankernel(σ)
+	P = size(h,1)
+	padl, padr = ceil(Int,(P-stride)/2), floor(Int,(P-stride)/2)
+	pad = (padl, padr, padl, padr)
+	H(x) = conv(x, repeat(h,1,1,1,size(x,3)); pad=pad, stride=stride, groups=size(x,3))
+	return H
+end
 
 function sobelkernel(T::Type=Float32)
 	W = zeros(T, 3,3,1,2)
@@ -129,6 +79,12 @@ function sobelkernel(T::Type=Float32)
 	W[:,:,1,2] = 0.25*[1 0 -1; 2 0 -2; 1 0 -1];
 	Wᵀ = reverse(permutedims(W, (2,1,4,3)), dims=:);
 	return W, Wᵀ
+end
+
+function ConvSobel(σ; stride=1)
+	h = sobelkernel()
+	H(x) = conv(x, repeat(h,1,1,1,size(x,3)÷2); pad=1, stride=stride, groups=size(x,3)÷2)
+	return H
 end
 
 function cdkernel(T::Type=Float32)
@@ -147,16 +103,30 @@ end
 backward image warping
 Wimg[x] = img[x + v]
 """
-function backward_warp(img::Array{T,4}, v) where {T}
+function backward_warp(img::Union{T, SubArray{<:Any,<:Any,T}}, v::Union{T, SubArray{<:Any,<:Any,T}}) where {T<:Union{AbstractArray,CuArray}}
 	Wimg = similar(img)
+	itp  = OnCell()|>Natural|>Cubic|>BSpline
 	for i=1:size(img,3), j=1:size(img,4)
-		itp  = OnCell()|>Natural|>Cubic|>BSpline
 		Iimg = extrapolate(interpolate(img[:,:,i,j], itp), 0)
 		for m=1:size(Wimg,1), n=1:size(Wimg,2)
-			vx = [m; n] .+ v[m,n,1,:]
+			vx = [m; n] .+ v[m,n,:,j]
 			Wimg[m,n,i,j] = Iimg(vx...)
 		end
 	end
 	return Wimg
+end
+
+#=============================================================================
+                             Flow
+=============================================================================#
+
+function colorflow(flow::Array{T,4}, maxflow=maximum(mapslices(norm, flow, dims=3))) where {T}
+    CT = HSV{Float32}
+    color(x1, x2) = ismissing(x1) || ismissing(x2) ?
+        CT(0, 1, 0) :
+        CT(180f0/π * atan(x1, x2), norm((x1, x2)) / maxflow, 1)
+    x1 = selectdim(flow, 3, 1)
+    x2 = selectdim(flow, 3, 2)
+    return color.(x1, x2)
 end
 
