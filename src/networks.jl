@@ -36,23 +36,23 @@ function BCANet(K::Int=10, M::Int=8, P::Int=7, s::Int=1, λ₀=1f-1; init=false)
 			B[k].weight  ./= sqrt(L)
 		end
 	end
-	τ = 1f0*ones(Float32,K)
+	τ = ntuple(i->1f0, K+1)
 	λ = ntuple(i->Float32(λ₀)*ones(Float32,1,1,2*M,1), K)
 	∇ = Conv(sobelkernel()[1], false; pad=1)
 	BCANet(Aᵀ, B, τ, λ, K, M, P, s, ∇)
 end
 
 # Unrolled TVL1-BCA 
-function (n::BCANet)(I₀,I₁,v̄)
+function (n::BCANet)(I₀,I₁,v̄=zero(Float32))
 	#I₀ᵖ, I₁ᵖ, p = preprocess(I₀, I₁, n.s)
 	I₀ᵖ, I₁ᵖ = I₀, I₁
 	∇I = n.∇(I₁ᵖ)
-	r = I₁ᵖ - I₀ᵖ; b = r - sum(∇I.*v̄, dims=3)
+	b = I₁ᵖ .- I₀ᵖ .- sum(∇I.*v̄, dims=3)
 	α = sum(abs2, ∇I, dims=3) .+ 1f-7
 	# k = 1, primal update
-	vᵏ= v̄; w = zero(Float32)
-	v = v̄ .+ ∇I.*(ST(r,n.τ[1].*α) .- r)./α
-	for k ∈ 2:n.K
+	vᵏ= 0; w = zero(Float32)
+	v = ∇I.*(ST(b,n.τ[n.K+1].*α) .- b)./α
+	for k ∈ 1:n.K
 		# dual update
 		y = w .+ n.B[k](2v .- vᵏ)
 		q = sqrt.(y[:,:,1:n.M,:].^2 .+ y[:,:,n.M+1:end,:].^2)
@@ -63,10 +63,9 @@ function (n::BCANet)(I₀,I₁,v̄)
 		r = sum(abs2, ∇I.*x, dims=3) .+ b
 		v = x .+ ∇I.*(ST(r, n.τ[k].*α) .- r)./α
 	end
+	#return unpad(v, p[2])
 	return v
-	#return unpad(v, p.pad)
 end
-(net::BCANet)(I₀,I₁) = net(I₀,I₁,zero(Float32))
 
 # PROJECTION 
 Π!(t::AbstractArray) = clamp!(t, 0, Inf)

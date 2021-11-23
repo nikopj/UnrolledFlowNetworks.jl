@@ -31,10 +31,13 @@ function passthrough!(net, data::Dataloader, training=false; β=0.5, W=0, opt=mi
 			update!(opt, Θ, ∇L)
 			Π!(net)
 		else 
-			v = flowctf(net, F.I₀[1], F.I₁[1]; J=length(F.v), W=W)
+			v = flowctf(net, F.I₀[1], F.I₁[1]; J=length(F.v)-1, W=W)
 			ρ = EPELoss(v, F.v[1], F.M[1])
 		end
-		isnan(ρ) && return NaN
+		if isnan(ρ) 
+			@warn "passthrough!: NaN loss encountered"
+			return NaN
+		end
 		ρ⃗[i] = ρ
 		if verbose
 			values = [(:loss, ρ), (:avgloss, mean(ρ⃗[1:i]))]
