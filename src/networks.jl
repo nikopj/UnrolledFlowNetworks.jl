@@ -89,6 +89,21 @@ function Base.show(io::IO, n::BCANet)
 	printstyled(io, "  # ", nps, nps_unit*" parameters"; color=:light_black)
 end
 
+function recflowctf(net::BCANet, I₀, I₁, J::Int, W::Int; H=missing)
+	if J == 0 && W==0
+		v̄ = zero(Float32)
+		for 
+		v = net(I₀, I₁, v̄)
+		return v, v̄
+	end
+	H = ismissing(H) ? ConvGaussian(1; stride=2) : H
+	v⃗ = recflowctf(net, H(I₀), H(I₁), J-1, W, H=H) 
+	v̄ = 2*upsample_bilinear(v⃗[1], (2,2))
+	WI₁ = backward_warp(I₁, v̄)
+	v = net(I₀, WI₁, v̄)
+	return v, v⃗...
+end
+
 function flowctf(net::BCANet, I₀, I₁; J=0, W=0, retflows=false)
 	# construct gaussian pyramid Δ
 	H = ConvGaussian(1; stride=2)
