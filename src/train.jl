@@ -19,16 +19,16 @@ function passthrough!(net, data::Dataloader, training=false; β=0.5, W=0, opt=mi
 	P = meter.Progress(length(data), desc=desc, showspeed=true)
 
 	# -- initialize --
-	local ρ, ∇L, Θ;              # mini-batch loss, metric
 	ρ⃗ = zeros(length(data));  # loss history
-
 	Θ = params(net)
+	norm∇L = 0
 
 	for (i,F) ∈ enumerate(data)
 		F = F |> device
 		if training
 			∇L, ρ = PyramidGradient(net, Θ, F; β=β, W=W)
 			update!(opt, Θ, ∇L)
+			norm∇L = verbose ? gradnorm(∇L) : 0
 			Π!(net)
 		else 
 			v = flowctf(net, F.I₀[1], F.I₁[1]; J=length(F.v)-1, W=W)
@@ -41,10 +41,7 @@ function passthrough!(net, data::Dataloader, training=false; β=0.5, W=0, opt=mi
 		ρ⃗[i] = ρ
 		if verbose
 			values = [(:loss, ρ), (:avgloss, mean(ρ⃗[1:i]))]
-			if training
-				norm∇L = gradnorm(∇L) 
-				push!(values, (:norm∇L, norm∇L))
-			end
+			training && push!(values, (:norm∇L, norm∇L))
 		end
 		meter.next!(P; showvalues = verbose ? values : [])
 	end
@@ -114,7 +111,7 @@ function train!(net, loaders, opt; J=0, W=0, β=0.8, epochs=1, Δval=5, start=1,
 	if start == 1 
 		fn = joinpath(savedir,"net.bson")
 		@info "Saving initial weights to $fn..."
-		safesave(fn, Dict(:net=>net, :epoch=>0, :epe=>-Inf, :η=>opt.eta))
+		safesave(fn, Dict(:net=>net, :epoch=>0, :loss=>Dict(:trn=>Inf, :val=>Inf), :η=>opt.eta))
 		@info "Creating log files: $savedir/{trn.csv,val.csv,backtrack.csv}"
 		init_tracker(savedir)
 	end
@@ -135,7 +132,7 @@ function train!(net, loaders, opt; J=0, W=0, β=0.8, epochs=1, Δval=5, start=1,
 			ρ̄ = any(isnan.(ρ⃗)) ? NaN : mean(ρ⃗)
 
 			# -- backtracking --
-			if isnan(ρ̄) || δ*ρ̄ > ρᵇ[phase]
+			if isnan(ρ̄) || (phase==:val && δ*ρ̄ > ρᵇ[:val])
 				fn = joinpath(savedir,"net.bson")
 				if isfile(fn)
 					ckpt = load(fn)
@@ -154,7 +151,7 @@ function train!(net, loaders, opt; J=0, W=0, β=0.8, epochs=1, Δval=5, start=1,
 
 					# -- rollback train loop --
 					net, ♪, ρᵇ = ckpt[:net] |> device, ckpt[:epoch], ckpt[:loss]
-					opt.eta = 0.8ckpt[:η]
+					opt.eta *= 0.8 #0.8ckpt[:η]
 					@info @sprintf "Backtracking: (η ← %.3e)" opt.eta
 					break # phase for-loop
 				end
@@ -179,15 +176,15 @@ function train!(net, loaders, opt; J=0, W=0, β=0.8, epochs=1, Δval=5, start=1,
 		# -- learning-rate scheduling (η ← γη) --
 		if ♪ % Δsched == 0 
 			opt.eta *= γ
-			@info @sprintf "Updating learning rate: (η ← %.3e)" opt.eta
+			@info @sprintf "Scheduling learning rate: (η ← %.3e)" opt.eta
 		end
 		♪ += 1
 	end
 
 	# -- test --
 	if :tst ∈ keys(loaders)
-		ρ⃗ = passthrough!(net, L, loaders[:tst]; desc="TST:", verbose=verbose, device=device)
-		ρ̄ = mean(ρ⃗₀)
+		ρ⃗ = passthrough!(net, loaders[:tst]; β=β, W=W, desc="TST:", verbose=verbose, device=device)
+		ρ̄ = mean(ρ⃗)
 		log(joinpath(savedir, "tst.csv"), @sprintf("%s, %.3f\n", loaders[:tst].dataset.name, ρ̄))
 	end
 
@@ -203,13 +200,13 @@ end
 log(fn::String, data::Vector) = log(fn, join(string.(data),',')*"\n")
 
 function init_tracker(savedir)
-	df = Dict(:trn=>DataFrame(epoch=[], loss=[], lr=[]), :val=>DataFrame(epoch=[], loss=[], lr=[]))
+	df = Dict(:trn=>DataFrame(epoch=[-1], loss=[0], lr=[0]), :val=>DataFrame(epoch=[-1], loss=[0], lr=[0]))
 	for phase ∈ (:trn, :val)
 		fn = joinpath(savedir,"$phase.csv")
 		safesave(fn, df[phase])
 	end
 	fn = joinpath(savedir, "backtrack.csv")
-	safesave(fn, DataFrame(epoch=[], Δρ=[], lr=[]))
+	safesave(fn, DataFrame(epoch=[-1], Δρ=[0], lr=[0]))
 	return df
 end
 

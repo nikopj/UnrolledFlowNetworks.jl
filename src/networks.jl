@@ -36,7 +36,7 @@ function BCANet(K::Int=10, M::Int=8, P::Int=7, s::Int=1, λ₀=1f-1; init=false)
 			B[k].weight  ./= sqrt(L)
 		end
 	end
-	τ = ntuple(i->1f0, K+1)
+	τ = ntuple(i->1f0*ones(Float32,1,1,1,1), K+1)
 	λ = ntuple(i->Float32(λ₀)*ones(Float32,1,1,2*M,1), K)
 	∇ = Conv(sobelkernel()[1], false; pad=1)
 	BCANet(Aᵀ, B, τ, λ, K, M, P, s, ∇)
@@ -49,7 +49,7 @@ function (n::BCANet)(I₀,I₁,v̄=zero(Float32))
 	b = I₁ᵖ .- I₀ᵖ .- sum(∇I.*v̄, dims=3)
 	α = sum(abs2, ∇I, dims=3) .+ 1f-7
 	# k = 1, primal update
-	vᵏ= 0; w = zero(Float32)
+	vᵏ = zero(Float32); w = zero(Float32)
 	v = ∇I.*(ST(b,n.τ[n.K+1].*α) .- b)./α
 	for k ∈ 1:n.K
 		# dual update
@@ -71,7 +71,7 @@ function Π!(c::Union{Conv,ConvTranspose})
 	c.weight ./= max.(1, sqrt.(sum(abs2, c.weight, dims=(1,2))))
 end
 function Π!(n::BCANet)
-	Π!.((n.Aᵀ..., n.B..., n.τ, n.λ...))
+	Π!.((n.Aᵀ..., n.B..., n.τ..., n.λ...))
 	return n
 end
 
@@ -89,7 +89,6 @@ end
 function recflowctf(net::BCANet, I₀, I₁, J::Int, W::Int; H=missing)
 	if J == 0 && W==0
 		v̄ = zero(Float32)
-		for 
 		v = net(I₀, I₁, v̄)
 		return v, v̄
 	end
