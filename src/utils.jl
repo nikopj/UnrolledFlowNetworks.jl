@@ -64,8 +64,8 @@ function gaussiankernel(T::Type, σ, m=ceil(Int,6σ-1))
 end
 gaussiankernel(σ, m=ceil(Int,6σ-1)) = gaussiankernel(Float32, σ, m)
 
-function ConvGaussian(σ; stride=1)
-	h = gaussiankernel(σ)
+function ConvGaussian(σ; stride=1, device=x->x)
+	h = gaussiankernel(σ) |> device
 	P = size(h,1)
 	padl, padr = ceil(Int,(P-stride)/2), floor(Int,(P-stride)/2)
 	pad = (padl, padr, padl, padr)

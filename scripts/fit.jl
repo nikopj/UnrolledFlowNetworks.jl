@@ -1,5 +1,4 @@
 using UnrolledFlowNetworks, Flux, CUDA, FileIO
-using Flux.Optimise: Optimiser, ClipNorm
 CUDA.allowscalar(true)
 
 function fit(fn; device=cpu)
