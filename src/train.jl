@@ -137,7 +137,7 @@ function train!(net, loaders, opt; J=0, W=0, β=0.8, epochs=1, Δval=5, start=1,
 				if isfile(fn)
 					ckpt = load(fn)
 					# -- update logs --
-					@assert ckpt[:loss] == ρᵇ "Checkpoint $fn: ckpt[:loss]≠ρᵇ ($(ckpt[:loss])≠$ρᵇ)."
+					@assert ckpt[:loss][:val] == ρᵇ[:val] "Checkpoint $fn: ckpt[:loss][:val]≠ρᵇ[:val] ($(ckpt[:loss][:val])≠$(ρᵇ[:val]))."
 					for phaseᵖ ∈ (:trn, :val)
 						if phaseᵖ == :val && ♪ ≤ Δval || phaseᵖ == :train && ♪ ≤ start
 							continue

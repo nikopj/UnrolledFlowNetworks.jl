@@ -213,6 +213,8 @@ function transform(f_augment::Function, Fb::Vector{FlowSample}, σ, scale, J, H)
 	Fb = cat(f_augment.(Fb)..., dims=4)
 	Fb.I₀ = awgn(Fb.I₀, σ)[1] |> x->clamp!(x,0,1)
 	Fb.I₁ = awgn(Fb.I₁, σ)[1] |> x->clamp!(x,0,1)
+	pad = calcpad(size(Fb.I₀)[1:2], 2^(scale+J))
+	Fb = broadcast!(x->pad_reflect(x, pad, dims=(1,2)), Fb)
 	# blur to scale
 	for i ∈ 1:scale
 		Fb = broadcast!(H, Fb)

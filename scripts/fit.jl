@@ -34,6 +34,6 @@ if !isinteractive()
 
 	fn = ARGS[1]
 	device = CUDA.functional() ? begin @info "Using GPU."; gpu end : cpu
-	fit!(fn; device=device)
+	fit(fn; device=device)
 end
 

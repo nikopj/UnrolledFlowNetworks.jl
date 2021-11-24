@@ -1,0 +1,10 @@
+L = 595.27563f0
+net = BCANet(K=10, M=8, P=7, s=2)  # 15k parameters
+loaders = (trn = Dataloader(dataset=MPISintelDataset(name="MPI-Sintel-trn", length=934, eltype=UnrolledFlowNetworks.FlowSample),
+batch_size=1, length=934, eltype=UnrolledFlowNetworks.FlowSample)
+, val = Dataloader(dataset=MPISintelDataset(name="MPI-Sintel-val", length=107, eltype=UnrolledFlowNetworks.FlowSample),
+batch_size=1, length=107, eltype=UnrolledFlowNetworks.FlowSample)
+, tst = Dataloader(dataset=MPISintelDataset(name="MPI-Sintel-val", length=107, eltype=UnrolledFlowNetworks.FlowSample),
+batch_size=1, length=107, eltype=UnrolledFlowNetworks.FlowSample)
+)
+--- EPOCH 1 ---
