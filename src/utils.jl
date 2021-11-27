@@ -64,14 +64,15 @@ function gaussiankernel(T::Type, σ, m=ceil(Int,6σ-1))
 end
 gaussiankernel(σ, m=ceil(Int,6σ-1)) = gaussiankernel(Float32, σ, m)
 
-function ConvGaussian(σ; stride=1, device=x->x)
-	h = gaussiankernel(σ) |> device
+function ConvGaussian(T::Type, σ::Real; stride=1, device=x->x)
+	h = gaussiankernel(T, σ) |> device
 	P = size(h,1)
 	padl, padr = ceil(Int,(P-stride)/2), floor(Int,(P-stride)/2)
 	pad = (padl, padr, padl, padr)
 	H(x) = conv(x, repeat(h,1,1,1,size(x,3)); pad=pad, stride=stride, groups=size(x,3))
 	return H
 end
+ConvGaussian(σ::Real; kws...) = ConvGaussian(Float32, σ; kws...)
 
 function sobelkernel(T::Type=Float32)
 	W = zeros(T, 3,3,1,2)
@@ -81,8 +82,8 @@ function sobelkernel(T::Type=Float32)
 	return W, Wᵀ
 end
 
-function ConvSobel(σ; stride=1)
-	h = sobelkernel()
+function ConvSobel(T::Type=Float32; stride=1)
+	h = sobelkernel(T)
 	H(x) = conv(x, repeat(h,1,1,1,size(x,3)÷2); pad=1, stride=stride, groups=size(x,3)÷2)
 	return H
 end

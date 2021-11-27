@@ -16,7 +16,7 @@ include("utils.jl")
 export loadargs, saveargs, backward_warp, ConvGaussian, colorflow
 
 include("solvers.jl")
-export flowctf
+export flow_ictf
 
 include("data.jl")
 export tensorload, tensor2img, img2tensor, getMPISintelLoaders, MPISintelDataset, Dataloader

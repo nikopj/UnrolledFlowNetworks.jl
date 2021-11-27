@@ -58,7 +58,7 @@ function (n::BCANet)(I₀,I₁,v̄=zero(Float32))
 		w = y ./ max.(1, cat(q,q,dims=3) ./ n.λ[k])
 		# primal update
 		vᵏ= v
-		x = vᵏ .- n.τ[k].*n.Aᵀ[k](w)
+		x = v .- n.τ[k].*n.Aᵀ[k](w)
 		r = sum(abs2, ∇I.*x, dims=3) .+ b
 		v = x .+ ∇I.*(ST(r, n.τ[k].*α) .- r)./α
 	end

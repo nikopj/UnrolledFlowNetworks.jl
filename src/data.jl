@@ -24,8 +24,8 @@ function tensor2img(ctype, A::Array{<:Real})
 	reinterpret(reshape, ctype{N0f8}, N0f8.(clamp.(A,0,1)))
 end
 
-function img2tensor(A)
-	B = Float32.(reinterpret(reshape, N0f8, A) |> collect)
+function img2tensor(T::Type, A)
+	B = T.(reinterpret(reshape, N0f8, A) |> collect)
 	if ndims(B) == 3
 		B = permutedims(B, (2,3,1))
 		B = reshape(B, size(B)..., 1)
@@ -34,11 +34,14 @@ function img2tensor(A)
 	end
 	return B
 end
+img2tensor(A) = img2Tensor(Float32, A)
 
-function tensorload(path; gray=false)
+function tensorload(T::Type, path::String; gray::Bool=false)
 	img = load(path)
-	img2tensor(gray ? Gray.(img) : img)
+	img2tensor(T, gray ? Gray.(img) : img)
 end
+tensorload(path::String; gray::Bool=false) = tensorload(Float32, path, gray)
+
 
 
 #==============================================================================
