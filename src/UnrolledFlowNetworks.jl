@@ -3,6 +3,7 @@ module UnrolledFlowNetworks
 using Interpolations, OMEinsum, FFTW
 using Flux, NNlib, Statistics, CUDA, LinearAlgebra, Zygote
 using Flux.Optimise: Optimiser, ClipNorm, ADAM, update!
+using LazyGrids
 using Images, Printf, FileIO
 using CSV, CSVFiles, BSON, DataFrames
 import YAML
@@ -13,7 +14,7 @@ using Random: shuffle
 using DelimitedFiles
 
 include("utils.jl")
-export loadargs, saveargs, backward_warp, ConvGaussian, colorflow
+export loadargs, saveargs, warp_bilinear, ConvGaussian, colorflow
 
 include("solvers.jl")
 export flow_ictf

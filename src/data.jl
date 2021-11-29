@@ -38,11 +38,14 @@ img2tensor(A) = img2Tensor(Float32, A)
 
 function tensorload(T::Type, path::String; gray::Bool=false)
 	img = load(path)
-	img2tensor(T, gray ? Gray.(img) : img)
+	# load optical flow
+	if occursin(".flo", path)
+		return permutedims(convert(Array{T,3},img), (2,3,1)) |> Flux.unsqueeze(4)
+	end
+	# load image
+	return img2tensor(T, gray ? Gray.(img) : img)
 end
-tensorload(path::String; gray::Bool=false) = tensorload(Float32, path, gray)
-
-
+tensorload(path::String; gray::Bool=false) = tensorload(Float32, path; gray=gray)
 
 #==============================================================================
                                  FLOWDATA/SAMPLE
