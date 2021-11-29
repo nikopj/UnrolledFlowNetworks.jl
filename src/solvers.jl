@@ -58,13 +58,14 @@ function TVL1_BCA(u₀::Array{T,4}, u₁::Array{T,4}, λ::Real, v̄=missing, w=m
 	while k == 0 || k < maxit && residual[k] > tol
 		# proximal gradient ascent on dual
 		y = w + σ*D(2v - vᵏ)
-		w = y ./ max.(1, sqrt.(sum(abs2, y, dims=3))./λ) # w <- prox_σg∗(y)
+		w = y ./ max.(1, sqrt.(sum(abs2, y, dims=3))./λ) 
+		#w = min.(λ, max.(-λ, y))
 
 		vᵏ = v
 		# proximal gradient descent on primal
 		x = v - τ*Dᵀ(w)
 		r = sum(∇u.*x, dims=3) + b
-		v = x + ∇u.*(ST(r, η) - r)./α   # v <- prox_τf(x)
+		v = x + ∇u.*(ST(r, η) - r)./α  
 
 		k += 1
 		residual[k] = norm(v - vᵏ)/norm(vᵏ)
@@ -82,7 +83,8 @@ function TVL1_VCA(u₀::Array{T,4}, u₁::Array{T,4}, λ, v̄=missing, dual_vars
 	# step-sizes
 	τ = T(0.99 / sqrt(8))
 	σ = T(0.99 / sqrt(8))
-	ρ = T(1)
+	ρ = T(2)
+	η = τ/ρ
 
 	# init conv operators
 	W, _ = sobelkernel(T)
@@ -97,15 +99,14 @@ function TVL1_VCA(u₀::Array{T,4}, u₁::Array{T,4}, λ, v̄=missing, dual_vars
 	vᵏ = v̄
 	v  = v̄
 	if ismissing(dual_vars)
-	# 	t = zeros(T,M,N,C,1)
-	# 	s = zeros(T,M,N,C,1)
+		t = zeros(T,M,N,C,1)
+		s = zeros(T,M,N,C,1)
 		w = zeros(T,M,N,4,1)
 	else
-	# 	t, s, w = dual_vars
-		w = dual_vars
+		t, s, w = dual_vars
 	end
-	t = zeros(T,M,N,C,1)
-	s = zeros(T,M,N,C,1)
+	# t = zeros(T,M,N,C,1)
+	# s = zeros(T,M,N,C,1)
 	residual = zeros(maxit)  
 
 	# ADMM init
@@ -116,7 +117,7 @@ function TVL1_VCA(u₀::Array{T,4}, u₁::Array{T,4}, λ, v̄=missing, dual_vars
 	# Q = AᵀA
 	@ein Q[m,n,i,j] := A[m,n,k,i]*A[m,n,k,j]
 	# R = 1/(I +τρAᵀA)
-	Q .*= τ*ρ
+	Q .*= ρ
 	Q[:,:,1,1] .+= 1
 	Q[:,:,2,2] .+= 1
 	R = similar(Q)
@@ -136,21 +137,21 @@ function TVL1_VCA(u₀::Array{T,4}, u₁::Array{T,4}, λ, v̄=missing, dual_vars
 		# proximal gradient ascent on dual
 		y = w + σ*D(2v - vᵏ)
 		w = y ./ max.(1, sqrt.(sum(abs2, y, dims=3))./λ) 
+		# w = min.(λ, max.(-λ, y))
 
 		vᵏ = v
 		# proximal gradient descent on primal
 		x = v - τ*Dᵀ(w)
+		# ADMM primal variable update
+		# v = R(x - ρAᵀ(b - t + s))
 		bts = b - t + s
-		# temp = Aᵀ(b - t + s)
-		# temp = x - τρ*temp
-		# v = R*temp
-		# v = R(x - τρAᵀ(b - t + s))
 		@ein temp[m,n,i,1] := A[m,n,k,i] * bts[m,n,k,1]
-		temp = x - τ*ρ*temp
+		temp = x - ρ*temp
 		@ein v[m,n,i,1]  := R[m,n,i,k] * temp[m,n,k,1]
+
 		@ein Av[m,n,i,1] := A[m,n,i,k] * v[m,n,k,1]
-		t = BT(Av + b + s, 1/(τ*ρ))
-		s = s + Av + b - t
+		t = BT(Av + b + s, η) # ADMM split variable update
+		s = s + Av + b - t    # ADMM dual ascent
 
 		k += 1
 		residual[k] = norm(v - vᵏ)/norm(vᵏ)
@@ -158,7 +159,7 @@ function TVL1_VCA(u₀::Array{T,4}, u₁::Array{T,4}, λ, v̄=missing, dual_vars
 			@printf "%3d: r=%.3e \n" k residual[k] 
 		end
 	end
-	return v, w, residual[1:k]
+	return v, (t,s,w), residual[1:k]
 end
 
 function flow_ictf(u₀::Array{T,4}, u₁::Array{T,4}, λ, J; maxwarp=0, verbose=true, tol=1e-3, maxit=100, tolwarp=1e-4) where {T}
@@ -190,6 +191,7 @@ function flow_ictf(u₀::Array{T,4}, u₁::Array{T,4}, λ, J; maxwarp=0, verbose
 			v̄ = v
 		end
 
+		# upscale flow and dual variables to finer scale
 		if j>0 
 			if typeof(dual_var) <: Tuple
 				dual_var = dual_var .|> x->2*upsample_bilinear(x, (2,2))
