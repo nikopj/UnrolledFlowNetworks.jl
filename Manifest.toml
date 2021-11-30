@@ -1176,6 +1176,12 @@ git-tree-sha1 = "eb35dcc66558b2dda84079b9a1be17557d32091a"
 uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 version = "0.33.12"
 
+[[StringDistances]]
+deps = ["Distances", "StatsAPI"]
+git-tree-sha1 = "00e86048552d34bb486cad935754dd9516bdb46e"
+uuid = "88034a9c-02f8-509d-84a9-84ec65e18404"
+version = "0.11.1"
+
 [[StringEncodings]]
 deps = ["Libiconv_jll"]
 git-tree-sha1 = "50ccd5ddb00d19392577902f0079267a72c5ab04"
@@ -1223,6 +1229,12 @@ version = "0.1.1"
 [[Test]]
 deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
 uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[[TestImages]]
+deps = ["AxisArrays", "ColorTypes", "FileIO", "OffsetArrays", "Pkg", "StringDistances"]
+git-tree-sha1 = "f91d170645a8ba6fbaa3ac2879eca5da3d92a31a"
+uuid = "5e47fb64-e119-507b-a336-dd2b206d9990"
+version = "1.6.2"
 
 [[TextParse]]
 deps = ["CodecZlib", "DataStructures", "Dates", "DoubleFloats", "Mmap", "Nullables", "WeakRefStrings"]
