@@ -67,6 +67,12 @@ git-tree-sha1 = "8ee75390ba4bbfaf9aa48c121857b0da9a914265"
 uuid = "a9ab73d0-e05c-5df1-8fde-d6a4645b8d8e"
 version = "0.2.1"
 
+[[BenchmarkTools]]
+deps = ["JSON", "Logging", "Printf", "Profile", "Statistics", "UUIDs"]
+git-tree-sha1 = "61adeb0823084487000600ef8b1c00cc2474cd47"
+uuid = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+version = "1.2.0"
+
 [[Bzip2_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "19a35467a82e236ff51bc17a3a44b69ef35185a2"
@@ -700,6 +706,12 @@ version = "2.10.1+0"
 [[LazyArtifacts]]
 deps = ["Artifacts", "Pkg"]
 uuid = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
+
+[[LazyGrids]]
+deps = ["Statistics"]
+git-tree-sha1 = "d0b3d29c09c15d49b51c7a11ddf38a3868eaf060"
+uuid = "7031d0ef-c40d-4431-b2f8-61a8d2f650db"
+version = "0.2.0"
 
 [[LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]

@@ -23,8 +23,7 @@ function powermethod(A::Function, b::AbstractArray; maxit=100, tol=1e-3, verbose
 	return λ, b, flag
 end
 
-function TVL1_BCA(u₀::Array{T,4}, u₁::Array{T,4}, λ::Real, v̄::Union{Missing,Array{T,4}}=missing; maxit=100, tol=1e-2, verbose=true) where {T}
-	@assert size(u₀,3) == 1 && size(u₁) == size(u₀) "BCA is for grayscale images only. Use TVL1_VCA for vector valued images."
+function TVL1_BCA(u₀::Array{T,4}, u₁::Array{T,4}, λ::Real, v̄=missing, w=missing; maxit=100, tol=1e-2, verbose=true) where {T}
 	M, N, _, _ = size(u₀)
 
 	λ = T(λ)
@@ -39,30 +38,34 @@ function TVL1_BCA(u₀::Array{T,4}, u₁::Array{T,4}, λ::Real, v̄::Union{Missi
 	Dᵀ = ConvTranspose(Wd; pad=1, groups=2);
 
 	# init loop variables
-	vᵏ = zeros(T,M,N,2,1)
-	w  = zeros(T,M,N,4,1) # dual var
-	residual = zeros(maxit)  
 	if ismissing(v̄)
 		v̄ = zeros(T,M,N,2,1)
 	end
+	vᵏ = v̄
+	v  = v̄
+	if ismissing(w)
+		w  = zeros(T,M,N,4,1) # dual var
+	end
+	residual = zeros(maxit)  
 
 	∇u = conv(u₁, W; pad=1)               # (M,N,2,1)
 	b  = u₁ - u₀ - sum(∇u.*v̄, dims=3)     # (M,N,1,1)
 	α = sum(abs2, ∇u, dims=3) .+ T(1e-7)  # (M,N,1,1)
 	η = τ.*α
-	v = ∇u.*(ST(b,η) - b)./α              # (M,N,2,1)
+	# v = ∇u.*(ST(b,η) - b)./α              # (M,N,2,1)
 
 	k = 0
 	while k == 0 || k < maxit && residual[k] > tol
 		# proximal gradient ascent on dual
 		y = w + σ*D(2v - vᵏ)
-		w = y ./ max.(1, sqrt.(sum(abs2, y, dims=3))./λ) # w <- prox_σg∗(y)
+		w = y ./ max.(1, sqrt.(sum(abs2, y, dims=3))./λ) 
+		#w = min.(λ, max.(-λ, y))
 
 		vᵏ = v
 		# proximal gradient descent on primal
 		x = v - τ*Dᵀ(w)
 		r = sum(∇u.*x, dims=3) + b
-		v = x + ∇u.*(ST(r, η) - r)./α   # v <- prox_τf(x)
+		v = x + ∇u.*(ST(r, η) - r)./α  
 
 		k += 1
 		residual[k] = norm(v - vᵏ)/norm(vᵏ)
@@ -70,10 +73,10 @@ function TVL1_BCA(u₀::Array{T,4}, u₁::Array{T,4}, λ::Real, v̄::Union{Missi
 			@printf "%3d: r=%.3e \n" k residual[k] 
 		end
 	end
-	return v, residual[1:k]
+	return v, w, residual[1:k]
 end
 
-function TVL1_VCA(u₀::Array{T,4}, u₁::Array{T,4}, λ, v̄=missing; maxit=100, tol=1e-2, verbose=true) where {T}
+function TVL1_VCA(u₀::Array{T,4}, u₁::Array{T,4}, λ, v̄=missing, dual_vars=missing; maxit=100, tol=1e-2, verbose=true) where {T}
 	M, N, C, _ = size(u₀)
 
 	λ = T(λ)
@@ -81,6 +84,7 @@ function TVL1_VCA(u₀::Array{T,4}, u₁::Array{T,4}, λ, v̄=missing; maxit=100
 	τ = T(0.99 / sqrt(8))
 	σ = T(0.99 / sqrt(8))
 	ρ = T(2)
+	η = τ/ρ
 
 	# init conv operators
 	W, _ = sobelkernel(T)
@@ -89,25 +93,31 @@ function TVL1_VCA(u₀::Array{T,4}, u₁::Array{T,4}, λ, v̄=missing; maxit=100
 	Dᵀ = ConvTranspose(Wd; pad=1, groups=2);
 
 	# init loop variables
-	vᵏ = zeros(T,M,N,2,1)
-	v  = zeros(T,M,N,2,1)
-	t  = zeros(T,M,N,C,1)
-	s  = zeros(T,M,N,C,1)
-	w  = zeros(T,M,N,4,1) # dual var
-	residual = zeros(maxit)  
 	if ismissing(v̄)
 		v̄ = zeros(T,M,N,2,1)
 	end
+	vᵏ = v̄
+	v  = v̄
+	if ismissing(dual_vars)
+		t = zeros(T,M,N,C,1)
+		s = zeros(T,M,N,C,1)
+		w = zeros(T,M,N,4,1)
+	else
+		t, s, w = dual_vars
+	end
+	# t = zeros(T,M,N,C,1)
+	# s = zeros(T,M,N,C,1)
+	residual = zeros(maxit)  
 
 	# ADMM init
 	∇u = permutedims(u₁, (1,2,4,3)) |> x->conv(x, W; pad=1) # (M,N,2,C)
 	A = permutedims(∇u, (1,2,4,3))
-	@assert size(A) == (M,N,C,2)
 
+	# (M,N,2,2)
 	# Q = AᵀA
 	@ein Q[m,n,i,j] := A[m,n,k,i]*A[m,n,k,j]
 	# R = 1/(I +τρAᵀA)
-	Q .*= τ*ρ
+	Q .*= ρ
 	Q[:,:,1,1] .+= 1
 	Q[:,:,2,2] .+= 1
 	R = similar(Q)
@@ -118,25 +128,30 @@ function TVL1_VCA(u₀::Array{T,4}, u₁::Array{T,4}, λ, v̄=missing; maxit=100
 	d = Q[:,:,1,1].*Q[:,:,2,2] - Q[:,:,1,2].*Q[:,:,2,1]
 	R = R./d
 
+	# (M,N,C,1)
 	@ein b[m,n,i,1] := A[m,n,i,k]*v̄[m,n,k,1]
 	b = u₁ - u₀ - b 
-	@assert size(b) == (M,N,C,1) 
 
 	k = 0
 	while k == 0 || k < maxit && residual[k] > tol
 		# proximal gradient ascent on dual
 		y = w + σ*D(2v - vᵏ)
-		w = y ./ max.(1, sqrt.(sum(abs2, y, dims=3))./λ) # w <- prox_σg∗(y)
+		w = y ./ max.(1, sqrt.(sum(abs2, y, dims=3))./λ) 
+		# w = min.(λ, max.(-λ, y))
 
 		vᵏ = v
 		# proximal gradient descent on primal
 		x = v - τ*Dᵀ(w)
-		@ein temp[m,n,i,1] := A[m,n,k,i] * (b-t+s)[m,n,k,1]
-		temp = x - τ*ρ*temp
+		# ADMM primal variable update
+		# v = R(x - ρAᵀ(b - t + s))
+		bts = b - t + s
+		@ein temp[m,n,i,1] := A[m,n,k,i] * bts[m,n,k,1]
+		temp = x - ρ*temp
 		@ein v[m,n,i,1]  := R[m,n,i,k] * temp[m,n,k,1]
+
 		@ein Av[m,n,i,1] := A[m,n,i,k] * v[m,n,k,1]
-		t = BT(Av + b + s, 1/(τ*ρ))
-		s = s + Av + b - t
+		t = BT(Av + b + s, η) # ADMM split variable update
+		s = s + Av + b - t    # ADMM dual ascent
 
 		k += 1
 		residual[k] = norm(v - vᵏ)/norm(vᵏ)
@@ -144,7 +159,7 @@ function TVL1_VCA(u₀::Array{T,4}, u₁::Array{T,4}, λ, v̄=missing; maxit=100
 			@printf "%3d: r=%.3e \n" k residual[k] 
 		end
 	end
-	return v, residual[1:k]
+	return v, (t,s,w), residual[1:k]
 end
 
 function flow_ictf(u₀::Array{T,4}, u₁::Array{T,4}, λ, J; maxwarp=0, verbose=true, tol=1e-3, maxit=100, tolwarp=1e-4) where {T}
@@ -157,7 +172,7 @@ function flow_ictf(u₀::Array{T,4}, u₁::Array{T,4}, λ, J; maxwarp=0, verbose
 		push!(pyramid, H.(pyramid[j]))
 	end
 
-	v̄ = missing
+	v̄, dual_var = missing, missing
 	v = nothing
 	# coarse to fine
 	for j ∈ J:-1:0
@@ -166,8 +181,8 @@ function flow_ictf(u₀::Array{T,4}, u₁::Array{T,4}, λ, J; maxwarp=0, verbose
 		# iterative warping
 		while w == 0 || w ≤ maxwarp && res > tolwarp
 			u₀, u₁ = pyramid[j+1]
-			ū₁ = j==J ? u₁ : backward_warp(u₁,v̄)
-			v, tvres = TVL1(u₀, ū₁, λ, v̄; maxit=maxit, tol=tol, verbose=false)
+			ū₁ = j==J ? u₁ : warp_bilinear(u₁,v̄)
+			v, dual_var, tvres = TVL1(u₀, ū₁, λ, v̄, dual_var; maxit=maxit, tol=tol, verbose=false)
 			res = (w==0 && j==J) ? Inf : norm(v - v̄)/norm(v̄)
 			if verbose
 				@printf "j=%02d | w=%02d | res=%.2e | k=%03d | tvres[k]=%.2e \n" j w res length(tvres) tvres[end]
@@ -176,7 +191,15 @@ function flow_ictf(u₀::Array{T,4}, u₁::Array{T,4}, λ, J; maxwarp=0, verbose
 			v̄ = v
 		end
 
-		v̄ = j>0 ? 2*upsample_bilinear(v̄, (2,2)) : v
+		# upscale flow and dual variables to finer scale
+		if j>0 
+			if typeof(dual_var) <: Tuple
+				dual_var = dual_var .|> x->2*upsample_bilinear(x, (2,2))
+			else
+				dual_var = 2*upsample_bilinear(dual_var, (2,2)) 
+			end
+			v̄ = 2*upsample_bilinear(v̄, (2,2)) 
+		end
 	end
 	return v̄
 end

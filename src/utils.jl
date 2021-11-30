@@ -104,7 +104,7 @@ end
 backward image warping
 Wimg[x] = img[x + v]
 """
-function backward_warp(img::Union{T, SubArray{<:Any,<:Any,T}}, v::Union{T, SubArray{<:Any,<:Any,T}}) where {T<:Union{AbstractArray,CuArray}}
+function warp_interpolate(img::Union{T, SubArray{<:Any,<:Any,T}}, v::Union{T, SubArray{<:Any,<:Any,T}}) where {T<:Union{AbstractArray,CuArray}}
 	Wimg = similar(img)
 	itp  = OnCell()|>Natural|>Cubic|>BSpline
 	for i=1:size(img,3), j=1:size(img,4)
@@ -115,6 +115,48 @@ function backward_warp(img::Union{T, SubArray{<:Any,<:Any,T}}, v::Union{T, SubAr
 		end
 	end
 	return Wimg
+end
+
+function warp_nearest!(dst, img, flow)
+	M, N, C, B = size(img)
+	y, x, c, b = ndgrid(1:M, 1:N, 1:C, 1:B)
+	u = clamp.(round.(Int, y .+ selectdim(flow, 3, 1)), 1, M) 
+	v = clamp.(round.(Int, x .+ selectdim(flow, 3, 2)), 1, N) 
+	index = tuple.(u,v,c,b)
+	NNlib.gather!(dst, img, index) 
+end
+function warp_nearest(img, flow) 
+	dst = similar(img)
+	warp_nearest!(dst, img, flow)
+	return dst
+end
+
+function warp_bilinear(img, flow)
+	M, N, C, B = size(img)
+	x, y, c, b = ndgrid(1:M, 1:N, 1:C, 1:B)
+	# points
+	u = x .+ selectdim(flow, 3, 1) 
+	v = y .+ selectdim(flow, 3, 2) 
+	
+	# nearby points
+	u0 = clamp.(floor.(Int, u), 1, M) 
+	v0 = clamp.(floor.(Int, v), 1, N) 
+	u1 = clamp.(ceil.(Int,  u), 1, M) 
+	v1 = clamp.(ceil.(Int,  v), 1, N) 
+
+	# function values
+	f00 = NNlib.gather(img, tuple.(u0,v0,c,b))
+	f01 = NNlib.gather(img, tuple.(u0,v1,c,b))
+	f10 = NNlib.gather(img, tuple.(u1,v0,c,b))
+	f11 = NNlib.gather(img, tuple.(u1,v1,c,b))
+	
+	# interpolation coefficients
+	c00 = (u1 .- u).*(v1 .- v) 
+	c01 = (u1 .- u).*(v .- v0) 
+	c10 = (u .- u0).*(v1 .- v) 
+	c11 = (u .- u0).*(v .- v0) 
+
+	return c00.*f00 + c01.*f01 + c10.*f10 + c11.*f11
 end
 
 #=============================================================================
