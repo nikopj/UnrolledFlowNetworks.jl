@@ -119,9 +119,9 @@ end
 
 function warp_nearest!(dst, img, flow)
 	M, N, C, B = size(img)
-	y, x, c, b = ndgrid(1:M, 1:N, 1:C, 1:B)
-	u = clamp.(round.(Int, y .+ selectdim(flow, 3, 1)), 1, M) 
-	v = clamp.(round.(Int, x .+ selectdim(flow, 3, 2)), 1, N) 
+	y, x, c, b = ndgrid(1:M, 1:N, 1:C, 1:B) .|> Zygote.dropgrad
+	u = clamp.(round.(Int, y .+ selectdim(flow, 3, 1:1)), 1, M) 
+	v = clamp.(round.(Int, x .+ selectdim(flow, 3, 2:2)), 1, N) 
 	index = tuple.(u,v,c,b)
 	NNlib.gather!(dst, img, index) 
 end
@@ -133,28 +133,40 @@ end
 
 function warp_bilinear(img, flow)
 	M, N, C, B = size(img)
-	x, y, c, b = ndgrid(1:M, 1:N, 1:C, 1:B)
+	x, y, c, b = ndgrid(1:M, 1:N, 1:C, 1:B) .|> Zygote.dropgrad
 	# points
-	u = x .+ selectdim(flow, 3, 1) 
-	v = y .+ selectdim(flow, 3, 2) 
-	
-	# nearby points
-	u0 = clamp.(floor.(Int, u), 1, M) 
-	v0 = clamp.(floor.(Int, v), 1, N) 
-	u1 = clamp.(ceil.(Int,  u), 1, M) 
-	v1 = clamp.(ceil.(Int,  v), 1, N) 
+	u = x .+ selectdim(flow, 3, 1:1) 
+	v = y .+ selectdim(flow, 3, 2:2) 
 
+	# nearby points
+	u0 = clamp.(floor.(Int32, u), 1, M) 
+	v0 = clamp.(floor.(Int32, v), 1, N) 
+	u1 = clamp.(ceil.(Int32,  u), 1, M) 
+	v1 = clamp.(ceil.(Int32,  v), 1, N) 
+
+	# move gather indices to CPU because: 
+	# https://github.com/FluxML/NNlibCUDA.jl/issues/29
+	au0 = Array(u0)
+	au1 = Array(u1)
+	av0 = Array(v0)
+	av1 = Array(v1)
+
+	index00 = CartesianIndex.(au0, av0, c, b)  
+	index01 = CartesianIndex.(au0, av1, c, b)  
+	index10 = CartesianIndex.(au1, av0, c, b)  
+	index11 = CartesianIndex.(au1, av1, c, b)  
+	
 	# function values
-	f00 = NNlib.gather(img, tuple.(u0,v0,c,b))
-	f01 = NNlib.gather(img, tuple.(u0,v1,c,b))
-	f10 = NNlib.gather(img, tuple.(u1,v0,c,b))
-	f11 = NNlib.gather(img, tuple.(u1,v1,c,b))
+	f00 = NNlib.gather(img, index00) 
+	f01 = NNlib.gather(img, index01) 
+	f10 = NNlib.gather(img, index10) 
+	f11 = NNlib.gather(img, index11) 
 	
 	# interpolation coefficients
-	c00 = (u1 .- u).*(v1 .- v) 
-	c01 = (u1 .- u).*(v .- v0) 
-	c10 = (u .- u0).*(v1 .- v) 
-	c11 = (u .- u0).*(v .- v0) 
+	c00 = (u1 - u).*(v1 - v) 
+	c01 = (u1 - u).*(v - v0) 
+	c10 = (u - u0).*(v1 - v) 
+	c11 = (u - u0).*(v - v0) 
 
 	return c00.*f00 + c01.*f01 + c10.*f10 + c11.*f11
 end
