@@ -6,4 +6,4 @@
 - allow different supervised loss functions (deep supervision, gradient stopping, etc.)
 - train networks
 	- experiment with scales, warping per scale, and loss functions
-- code image-driven total generalized variation L1 optical flow
+- write image-driven total generalized variation L1 optical flow

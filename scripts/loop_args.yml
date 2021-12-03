@@ -1,0 +1,38 @@
+loop: 
+  stopgrad: [false, true]
+  shared: [false, true]
+  η: [1e-1, 1e-3]
+name: "PiBCANet-stopgrad_shared_lr"
+version0: 1
+args:
+  opt:
+    η: 1e-2
+  train:
+    savedir: 
+    γ: 0.95
+    clipnorm: 5e-2
+    stopgrad: true
+    verbose: false
+    β: 5
+    Δval: 5
+    epochs: 1000
+    Δsched: 5
+    δ: 0.5
+  ckpt: 
+  net:
+    W: 5          # Warps per scale
+    shared: true  # BCANet sharing
+    K: 10         # itrs per module
+    M: 32         # num filters
+    P: 8          # filter side length
+    s: 2          # stride
+    λ₀: 1e-1      # initial threshold
+  data:
+    params:
+      σ: 1
+      batch_size: 4
+      J: 3
+      crop_size: 256
+      gray: true
+      scale: 0
+    root: "dataset/MPI_Sintel/"

@@ -2,18 +2,20 @@
 train.jl
 =#
 
-function gradnorm(∇::Zygote.Grads)
-	gnorm = 0
+function agradnorm(∇::Zygote.Grads)
+	agnorm = 0
+	i = 0
 	for g ∈ ∇
 		isnothing(g) && continue
-		gnorm += sum(abs2, vec(g))
+		agnorm += norm(vec(g))
+		i += 1
 	end
-	return sqrt(gnorm)
+	return agnorm / i
 end
 
-function passthrough!(net, data::Dataloader, training=false; β=0.5, W=0, opt=missing, desc="", verbose=true, clipnorm=Inf, device=x->x)
-	training ? @assert(!ismissing(opt),"Optimizer is required if training.") : nothing
-	if training && typeof(clipnorm) <: Real && clipnorm < Inf
+function passthrough!(net, data::Dataloader, training=false; β=10f0, opt=missing, desc="", verbose=true, clipnorm=Inf, stopgrad=true, device=identity)
+	training && @assert(!ismissing(opt),"Optimizer is required if training.") 
+	if training && !isa(clipnorm, Bool) && clipnorm < Inf
 		opt = Optimiser(ClipNorm(Float32(clipnorm)), opt)
 	end
 	P = meter.Progress(length(data), desc=desc, showspeed=true)
@@ -25,83 +27,48 @@ function passthrough!(net, data::Dataloader, training=false; β=0.5, W=0, opt=mi
 
 	for (i,F) ∈ enumerate(data)
 		F = F |> device
+		J = length(F.flows)-1
 		if training
-			∇L, ρ = PyramidGradient(net, Θ, F; β=β, W=W)
+			∇L = gradient(Θ) do
+				flows = net(F.frame0, F.frame1, J; stopgrad=stopgrad, retflows=true)
+				ρ = PiLoss(L1Loss, β, flows, F.flows, F.masks)
+			end
 			update!(opt, Θ, ∇L)
-			norm∇L = verbose ? gradnorm(∇L) : 0
+			norm∇L = verbose ? agradnorm(∇L) : 0
 			Π!(net)
 		else 
-			v = flowctf(net, F.I₀[1], F.I₁[1]; J=length(F.v)-1, W=W)
-			ρ = EPELoss(v, F.v[1], F.M[1])
+			flow = net(F.frame0, F.frame1, J; retflows=false)
+			ρ = EPELoss(flow, F.flows[1], F.masks[1])
 		end
-		if isnan(ρ) 
-			@warn "passthrough!: NaN loss encountered"
+		if isnan(ρ) || ρ > 100
+			@warn "passthrough!: NaN or large (>100) loss encountered"
 			return NaN
 		end
 		ρ⃗[i] = ρ
 		if verbose
-			values = [(:loss, ρ), (:avgloss, mean(ρ⃗[1:i]))]
-			training && push!(values, (:norm∇L, norm∇L))
+			values = [(:loss, @sprintf("%.3e",ρ)), (:avgloss, @sprintf("%.3e",mean(ρ⃗[1:i])))]
+			training && push!(values, (:avg_norm∇L, @sprintf("%.3e",norm∇L)))
+			training && push!(values, (:test, @sprintf("This should be changing if weights are updating... %.3e",net[2].A[2].weight[20])))
 		end
 		meter.next!(P; showvalues = verbose ? values : [])
 	end
 	return ρ⃗
 end
 
-function PyramidGradient(net, Θ, F::FlowSample; β=0.5, W=0)
-	J = length(F.v)-1
-	grads = []
-	loss_vec = []
-
-	local WI₁, v, ρ, Δgrad
-	v = zero(Float32)
-	for j ∈ J:-1:0
-		for w ∈ 0:W
-			WI₁ = (j==J && w==0) ? F.I₁[j+1] : backward_warp(F.I₁[j+1], v)
-			∇L = gradient(Θ) do
-				v = net(F.I₀[j+1], WI₁, v)
-				ρ = EPELoss(v, F.v[j+1], F.M[j+1])
-			end
-			pushfirst!(grads, ∇L)
-			pushfirst!(loss_vec, ρ)
-		end
-		v = j>0 ? 2*upsample_bilinear(v, (2,2)) : v
-	end
-
-	Δgrad = grads[1]
-	loss = loss_vec[1]
+# -- Pyramid Iterative Loss (PiLoss) --
+function PiLoss(Loss::Function, β::AbstractFloat, flows, flows_gt, masks) 
+	J, W = size(flows) .- 1
+	loss = 0
 	for j=0:J, w=0:W
-		j==0 && w==W && continue
-		j′= (W+1).*j+W-w+1
-		α = 0.25^(W-w)*β^j
-		loss += α*loss_vec[j′]
-		for p ∈ Θ
-			isnothing(grads[j′][p]) && continue
-			isnothing(Δgrad[p]) && continue
-			Δgrad[p] .+= α*grads[j′][p]
-		end
+		loss += 4f0^(-j)*β^(-W+w)*Loss(flows[j+1,w+1], flows_gt[j+1], masks[j+1])
 	end
-	return Δgrad, loss
+	return loss
 end
-
-# -- Pyramid EPE loss --
-function PyramidLoss(f::Function,β::Real,v⃗′,v⃗,M) 
-	J = length(v⃗)-1
-	W = length(v⃗′)÷(J+1)-1
-	ρ = 0
-	for j=0:J, w=0:W
-		j′= (W+1).*j+W-w
-		α = 0.25^(W-w)*β^j
-		ρ = ρ + α*f(v⃗′[j′+1], v⃗[j+1], M[j+1])
-	end
-	return ρ
-end
-EPELoss(v′,v,M) = mean(√, sum(abs2, M.*(v′.-v), dims=3) .+ 1e-7)
-PyramidEPELoss(x...) = PyramidLoss(EPELoss,x...)
+PiLoss(f, β::Real, args...) = PiLoss(f, Float32(β), args...)
+EPELoss(v′,v,M) = mean(√, sum(abs2, M.*(v′.-v), dims=3) .+ 1f-7)
 L1Loss(v′,v,M)  = mean(abs, M.*(v′.-v))
-PyramidL1Loss(x...) = PyramidLoss(L1Loss,x...)
 
-function train!(net, loaders, opt; J=0, W=0, β=0.8, epochs=1, Δval=5, start=1, savedir="./", verbose=true, δ=0.5, γ=0.99, Δsched=1, clipnorm=Inf, device=x->x)
+function train!(net, loaders, opt; epochs=1, Δval=5, start=1, savedir="./", verbose=true, δ=0.5, γ=0.99, Δsched=1, device=identity, kws...)
 	@assert δ < 1 "Backtracking multiplier δ=$δ≮1"
 
 	# best loss
@@ -128,7 +95,7 @@ function train!(net, loaders, opt; J=0, W=0, β=0.8, epochs=1, Δval=5, start=1,
 			desc = "$(string(phase) |> uppercase):"
 
 			# -- main loop --
-			ρ⃗ = passthrough!(net, loaders[phase], phase==:trn; β=β, W=W, opt=opt, desc=desc, verbose=verbose, device=device, clipnorm=clipnorm)
+			ρ⃗ = passthrough!(net, loaders[phase], phase==:trn; opt=opt, desc=desc, verbose=verbose, device=device, kws...)
 			ρ̄ = any(isnan.(ρ⃗)) ? NaN : mean(ρ⃗)
 
 			# -- backtracking --
@@ -151,7 +118,7 @@ function train!(net, loaders, opt; J=0, W=0, β=0.8, epochs=1, Δval=5, start=1,
 
 					# -- rollback train loop --
 					net, ♪, ρᵇ = ckpt[:net] |> device, ckpt[:epoch], ckpt[:loss]
-					opt.eta *= 0.8 #0.8ckpt[:η]
+					opt.eta *= 0.8 
 					@info @sprintf "Backtracking: (η ← %.3e)" opt.eta
 					break # phase for-loop
 				end
@@ -181,14 +148,15 @@ function train!(net, loaders, opt; J=0, W=0, β=0.8, epochs=1, Δval=5, start=1,
 		♪ += 1
 	end
 
+	@warn "NOT TESTING. UPDATE BEFORE SUBMITTING JOBS"
 	# -- test --
-	if :tst ∈ keys(loaders)
-		ρ⃗ = passthrough!(net, loaders[:tst]; β=β, W=W, desc="TST:", verbose=verbose, device=device)
-		ρ̄ = mean(ρ⃗)
-		log(joinpath(savedir, "tst.csv"), @sprintf("%s, %.3f\n", loaders[:tst].dataset.name, ρ̄))
-	end
+	# if :tst ∈ keys(loaders)
+	# 	ρ⃗ = passthrough!(net, loaders[:tst]; desc="TST:", verbose=verbose, kws...)
+	# 	ρ̄ = mean(ρ⃗)
+	# 	log(joinpath(savedir, "tst.csv"), @sprintf("%s, %.3f\n", loaders[:tst].dataset.name, ρ̄))
+	# end
 
-	return net
+	return nothing
 end
 
 function log(fn::String, data::String)

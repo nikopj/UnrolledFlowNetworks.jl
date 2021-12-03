@@ -24,8 +24,8 @@ function tensor2img(ctype, A::Array{<:Real})
 	reinterpret(reshape, ctype{N0f8}, N0f8.(clamp.(A,0,1)))
 end
 
-function img2tensor(T::Type, A)
-	B = T.(reinterpret(reshape, N0f8, A) |> collect)
+function img2tensor(T::Type, img)
+	B = T.(reinterpret(reshape, N0f8, img) |> collect)
 	if ndims(B) == 3
 		B = permutedims(B, (2,3,1))
 		B = reshape(B, size(B)..., 1)
@@ -34,16 +34,21 @@ function img2tensor(T::Type, A)
 	end
 	return B
 end
-img2tensor(A) = img2Tensor(Float32, A)
+img2tensor(A) = img2tensor(Float32, A)
+
+function flo2tensor(T::Type, flo)
+	return permutedims(convert(Array{T,3},flo), (2,3,1)) |> Flux.unsqueeze(4)
+end
+flo2tensor(A) = flo2tensor(Float32, A)
 
 function tensorload(T::Type, path::String; gray::Bool=false)
-	img = load(path)
+	A = load(path)
 	# load optical flow
 	if occursin(".flo", path)
-		return permutedims(convert(Array{T,3},img), (2,3,1)) |> Flux.unsqueeze(4)
+		return flo2tensor(A)
 	end
 	# load image
-	return img2tensor(T, gray ? Gray.(img) : img)
+	return img2tensor(T, gray ? Gray.(A) : A)
 end
 tensorload(path::String; gray::Bool=false) = tensorload(Float32, path; gray=gray)
 
@@ -52,19 +57,19 @@ tensorload(path::String; gray::Bool=false) = tensorload(Float32, path; gray=gray
 ==============================================================================#
 
 struct FlowData
-	frame::Any
-	flow::Any
-	occlusion::Any
-	invalid::Any
+	frame
+	flow
+	occlusion
+	invalid
 end
 
 mutable struct FlowSample
-	I₀ # frame 0
-	I₁ # frame 1
-	v  # flow
-	M  # occlusion mask
+	frame0 
+	frame1 
+	flows  
+	masks  
 end
-Base.size(F::FlowSample) = size(F.I₀)
+Base.size(F::FlowSample) = size(F.frame0)
 
 function broadcast!(f, F::FlowSample)
 	for name ∈ fieldnames(FlowSample)
@@ -77,14 +82,18 @@ Flux.cpu(F::FlowSample) = broadcast!(Flux.cpu, F)
 Flux.gpu(F::FlowSample) = broadcast!(Flux.gpu, F)
 
 function Base.cat(Fb::FlowSample...; dims=4)
-	FlowSample(cat([F.I₀ for F ∈ Fb]..., dims=dims),
-	           cat([F.I₁ for F ∈ Fb]..., dims=dims),
-	           cat([F.v for  F ∈ Fb]..., dims=dims),
-	           cat([F.M for  F ∈ Fb]..., dims=dims))
+	FlowSample(cat([F.frame0 for F ∈ Fb]..., dims=dims),
+	           cat([F.frame1 for F ∈ Fb]..., dims=dims),
+	           cat([F.flows for  F ∈ Fb]..., dims=dims),
+	           cat([F.masks for  F ∈ Fb]..., dims=dims))
 end
 
 function Base.show(io::IO, F::FlowSample)
-	print(io, "FlowSample((I₀,I₁,v,M), size=",size(F.I₀),")")
+	print(io, "FlowSample((frame0,frame1,flows,masks), size=",size(F.frame0))
+	if F.flows isa Tuple || F.flows isa Vector
+		print(io, ", J=", length(F.flows)-1)
+	end
+	print(io, ")")
 end
 
 #==============================================================================
@@ -127,7 +136,7 @@ function Base.getindex(ds::MPISintelDataset, i::Int)
 	fD = ds.data
 	FlowSample(img2tensor(fD.frame[p][q]), 
 	           img2tensor(fD.frame[p][q+1]), 
-	           permutedims(convert(Array{Float32,3},fD.flow[p][q]), (2,3,1)), 
+	           flo2tensor(fD.flow[p][q]),
 	           Float32.((1f0 .- fD.invalid[p][q]).*(1f0 .- fD.occlusion[p][q])))
 end
 Base.getindex(ds::MPISintelDataset, i::AbstractVector{Int}) = i .|> x-> ds[x]
@@ -142,9 +151,10 @@ end
 ==============================================================================#
 
 function getMPISintelLoaders(root::String; gray=false, batch_size=10, crop_size=128, σ=1, scale=0, J=0)
-	ds_trn = MPISintelDataset(root; split="trn", gray=gray)
+	@warn "NOT LOADING TRAINSET. UPDATE BEFORE SUBMITTING JOBS"
+	#ds_trn = MPISintelDataset(root; split="trn", gray=gray)
 	ds_val = MPISintelDataset(root; split="val", gray=gray)
-	dl_trn = Dataloader(ds_trn, true; batch_size=batch_size, crop_size=crop_size, scale=scale, J=J, σ=σ)
+	dl_trn = Dataloader(ds_val, true; batch_size=batch_size, crop_size=crop_size, scale=scale, J=J, σ=σ)
 	dl_val = Dataloader(ds_val, false; batch_size=1, scale=scale, J=J, σ=0)
 	return (trn=dl_trn, val=dl_val, tst=dl_val)
 end
@@ -165,10 +175,8 @@ end
 
 function Dataloader(ds::MPISintelDataset, training::Bool; batch_size::Int=1, crop_size::Int=128, scale=0, J=0, σ::Union{<:Real,Tuple,Vector}=5)
 	σ′ = Float32.((scale+1) .* σ./255)
-	# Gaussian blur on batch and channels
-	H = ConvGaussian(1; stride=2)
 	faugment(F) = training ? augment(F, crop_size) : F
-	xfrm(Fb) = transform(faugment, Fb, σ′, scale, J, H)
+	xfrm(Fb) = transform(faugment, Fb, σ′, scale, J)
 	# transform on list of FlowSamples
 	dl = Dataloader(ds, xfrm, batch_size, 1:length(ds))
 	shuffle!(dl)
@@ -213,31 +221,36 @@ function augment(F::FlowSample, crop_size)
 	return F
 end
 
-function transform(f_augment::Function, Fb::Vector{FlowSample}, σ, scale, J, H) 
-	# input: batched frames (w/ small noise) (I₀+ν₀, I₁+ν₀)
-	# target: ground-truth flow (masked) (v, M)
+function transform(f_augment::Function, Fb::Vector{FlowSample}, σ, scale, J) 
+	# batch
 	Fb = cat(f_augment.(Fb)..., dims=4)
-	Fb.I₀ = awgn(Fb.I₀, σ)[1] |> x->clamp!(x,0,1)
-	Fb.I₁ = awgn(Fb.I₁, σ)[1] |> x->clamp!(x,0,1)
-	pad = calcpad(size(Fb.I₀)[1:2], 2^(scale+J))
+
+	# add noise
+	Fb.frame0 = awgn(Fb.frame0, σ)[1] |> x->clamp!(x,0,1)
+	Fb.frame1 = awgn(Fb.frame1, σ)[1] |> x->clamp!(x,0,1)
+
+	# pad
+	pad = calcpad(size(Fb.frame0)[1:2], 2^(scale+J))
 	Fb = broadcast!(x->pad_reflect(x, pad, dims=(1,2)), Fb)
+
 	# blur to scale
+	H = ConvGaussian(1; stride=2)
 	for i ∈ 1:scale
 		Fb = broadcast!(H, Fb)
-		Fb.v ./= 2
+		Fb.flows ./= 2
 	end
-	# create target gaussian pyramid
-	I₀= [Fb.I₀]
-	I₁= [Fb.I₁]
-	v⃗ = [Fb.v]
-	M = [Fb.M]
+
+	# create gaussian pyramid
+	frame0 = Fb.frame0
+	frame1 = Fb.frame1
+	flows = [Fb.flows]
+	masks = [Fb.masks]
 	for j ∈ 1:J
-		push!(I₀, H(I₀[j]))
-		push!(I₁, H(I₁[j]))
-		push!(v⃗, H(v⃗[j])./2)
-		push!(M, H(M[j]))
+		push!(flows, H(flows[j])./2)
+		push!(masks, H(masks[j]))
 	end
-	return FlowSample(I₀, I₁, v⃗, M)
+
+	return FlowSample(frame0, frame1, flows, masks)
 end
 
 #==============================================================================
@@ -248,9 +261,9 @@ flip(x, dim=1) = reverse(x, dims=dim)
 randflip(x::AbstractArray, p::Real, dim=1) = rand() < p ? flip(x,dim) : x
 function randflip(F::FlowSample, p::Real, dim=1)
 	rand() < p ? F : begin
-		v = flip(F.v, dim)
-		selectdim(v, 3, dim) .*= -1
-		FlowSample(flip(F.I₀,dim), flip(F.I₁,dim), v, flip(F.M,dim))
+		flows = flip(F.flows, dim)
+		selectdim(flows, 3, dim) .*= -1
+		FlowSample(flip(F.frame0,dim), flip(F.frame1,dim), flows, flip(F.masks,dim))
 	end
 end
 
@@ -267,7 +280,7 @@ function randcrop(F::FlowSample, cs::Int)
 	M, N = size(F)[1:2]
 	i, j = rand(1:M-cs), rand(1:N-cs)
 	C(x) = crop(x, cs, (i,j))
-	FlowSample(C.((F.I₀, F.I₁, F.v, F.M))...)
+	FlowSample(C.((F.frame0, F.frame1, F.flows, F.masks))...)
 end
 
 """

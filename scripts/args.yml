@@ -1,0 +1,31 @@
+opt:
+  η: 0.0001
+train:
+  savedir: "models/PiBCANet-stopgrad_shared_lr-20"
+  γ: 0.95
+  stopgrad: true
+  verbose: false
+  Δval: 5
+  epochs: 1000
+  Δsched: 5
+  δ: 0.5
+  clipnorm: 0.05
+  β: 5
+ckpt: ~
+net:
+  shared: true
+  P: 8
+  M: 32
+  s: 2
+  W: 5
+  K: 10
+  λ₀: 0.1
+data:
+  params:
+    σ: 1
+    batch_size: 4
+    J: 3
+    crop_size: 256
+    gray: true
+    scale: 0
+  root: "dataset/MPI_Sintel/"

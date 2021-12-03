@@ -14,7 +14,7 @@ using Random: shuffle
 using DelimitedFiles
 
 include("utils.jl")
-export loadargs, saveargs, warp_bilinear, ConvGaussian, colorflow
+export loadargs, saveargs, warp_bilinear, ConvGaussian, colorflow, setrecursive!
 
 include("solvers.jl")
 export flow_ictf
@@ -23,9 +23,9 @@ include("data.jl")
 export tensorload, tensor2img, img2tensor, getMPISintelLoaders, MPISintelDataset, Dataloader
 
 include("networks.jl")
-export BCANet
+export BCANet, PiBCANet
 
 include("train.jl")
-export passthrough!, train!
+export passthrough!, train!, PiLoss, EPELoss, L1Loss
 
 end # module

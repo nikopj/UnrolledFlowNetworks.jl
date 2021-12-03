@@ -185,3 +185,24 @@ function colorflow(flow::Array{T,4}, maxflow=maximum(mapslices(norm, flow, dims=
     return color.(x1, x2)
 end
 
+#=============================================================================
+                             MISC
+=============================================================================#
+
+# set value of key in nested dictionary
+# key found greedily
+# returns flag==true of key not found
+function setrecursive!(d::Dict, key, value)
+	if haskey(d, key)
+		d[key] = value
+		return false
+	end
+	flag = true
+	for k ∈ keys(d)
+		if d[k] isa Dict
+			flag = setrecursive!(d[k], key, value)
+			!flag && break
+		end
+	end
+	return flag
+end
