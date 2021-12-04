@@ -1,9 +1,10 @@
 module UnrolledFlowNetworks
 
 using Interpolations, OMEinsum, FFTW
-using Flux, NNlib, Statistics, CUDA, LinearAlgebra, Zygote
+using Flux, NNlib, NNlibCUDA, Statistics, CUDA, LinearAlgebra, Zygote
 using Flux.Optimise: Optimiser, ClipNorm, ADAM, update!
 using LazyGrids
+using ForwardDiff: Dual
 using Images, Printf, FileIO
 using CSV, CSVFiles, BSON, DataFrames
 import YAML

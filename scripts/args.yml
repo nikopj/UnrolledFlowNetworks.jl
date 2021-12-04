@@ -1,31 +1,31 @@
 opt:
-  η: 0.0001
+  η: 8e-5
 train:
-  savedir: "models/PiBCANet-stopgrad_shared_lr-20"
+  savedir: "models/PiBCANet-test"
   γ: 0.95
+  clipnorm: 1
   stopgrad: true
-  verbose: false
-  Δval: 5
-  epochs: 1000
-  Δsched: 5
-  δ: 0.5
-  clipnorm: 0.05
+  verbose: true
   β: 5
-ckpt: ~
+  Δval: 2
+  epochs: 20
+  Δsched: 2
+  δ: 0.5
+ckpt: 
 net:
-  shared: true
-  P: 8
-  M: 32
-  s: 2
-  W: 5
-  K: 10
-  λ₀: 0.1
+  W: 5          # Warps per scale
+  shared: true  # BCANet sharing
+  K: 10         # itrs per module
+  M: 4         # num filters
+  P: 6          # filter side length
+  s: 2          # stride
+  λ₀: 1e-1      # initial threshold
 data:
   params:
     σ: 1
-    batch_size: 4
-    J: 3
+    batch_size: 2
+    J: 1
     crop_size: 256
     gray: true
-    scale: 0
+    scale: 2
   root: "dataset/MPI_Sintel/"

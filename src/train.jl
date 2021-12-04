@@ -24,20 +24,20 @@ function passthrough!(net, data::Dataloader, training=false; β=10f0, opt=missin
 	ρ⃗ = zeros(length(data));  # loss history
 	Θ = params(net)
 	norm∇L = 0
+	blur_op = ConvGaussian(1; groups=size(data[1].frame0,3), stride=2, device=device)
 
 	for (i,F) ∈ enumerate(data)
-		F = F |> device
 		J = length(F.flows)-1
 		if training
 			∇L = gradient(Θ) do
-				flows = net(F.frame0, F.frame1, J; stopgrad=stopgrad, retflows=true)
+				flows = net(F.frame0, F.frame1, J; stopgrad=stopgrad, retflows=true, blur_op=blur_op)
 				ρ = PiLoss(L1Loss, β, flows, F.flows, F.masks)
 			end
 			update!(opt, Θ, ∇L)
 			norm∇L = verbose ? agradnorm(∇L) : 0
 			Π!(net)
 		else 
-			flow = net(F.frame0, F.frame1, J; retflows=false)
+			flow = net(F.frame0, F.frame1, J; retflows=false, blur_op=blur_op)
 			ρ = EPELoss(flow, F.flows[1], F.masks[1])
 		end
 		if isnan(ρ) || ρ > 100
@@ -48,7 +48,7 @@ function passthrough!(net, data::Dataloader, training=false; β=10f0, opt=missin
 		if verbose
 			values = [(:loss, @sprintf("%.3e",ρ)), (:avgloss, @sprintf("%.3e",mean(ρ⃗[1:i])))]
 			training && push!(values, (:avg_norm∇L, @sprintf("%.3e",norm∇L)))
-			training && push!(values, (:test, @sprintf("This should be changing if weights are updating... %.3e",net[2].A[2].weight[20])))
+			#training && push!(values, (:test, @sprintf("This should be changing if weights are updating... %.3e",net[2].A[2].weight[20])))
 		end
 		meter.next!(P; showvalues = verbose ? values : [])
 	end

@@ -166,7 +166,7 @@ function flow_ictf(u₀::Array{T,4}, u₁::Array{T,4}, λ, J; maxwarp=0, verbose
 	TVL1 = size(u₀,3)==1 ? TVL1_BCA : TVL1_VCA
 
 	# construct Gaussian pyramid
-	H = ConvGaussian(T, 1; stride=2)
+	H = ConvGaussian(T, 1; groups=size(u₀,3), stride=2)
 	pyramid = [(u₀,u₁)]
 	for j∈1:J
 		push!(pyramid, H.(pyramid[j]))

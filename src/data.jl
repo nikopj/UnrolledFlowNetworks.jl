@@ -150,12 +150,12 @@ end
                                  DATALOADER
 ==============================================================================#
 
-function getMPISintelLoaders(root::String; gray=false, batch_size=10, crop_size=128, σ=1, scale=0, J=0)
+function getMPISintelLoaders(root::String; gray=false, batch_size=10, crop_size=128, σ=1, scale=0, J=0, device=identity)
 	@warn "NOT LOADING TRAINSET. UPDATE BEFORE SUBMITTING JOBS"
 	#ds_trn = MPISintelDataset(root; split="trn", gray=gray)
 	ds_val = MPISintelDataset(root; split="val", gray=gray)
-	dl_trn = Dataloader(ds_val, true; batch_size=batch_size, crop_size=crop_size, scale=scale, J=J, σ=σ)
-	dl_val = Dataloader(ds_val, false; batch_size=1, scale=scale, J=J, σ=0)
+	dl_trn = Dataloader(ds_val, true; batch_size=batch_size, crop_size=crop_size, scale=scale, J=J, σ=σ, device=device)
+	dl_val = Dataloader(ds_val, false; batch_size=1, scale=scale, J=J, σ=0, device=device)
 	return (trn=dl_trn, val=dl_val, tst=dl_val)
 end
 
@@ -173,10 +173,13 @@ function Dataloader(ds::AbstractDataset, transform::Function, bs::Int)
 	shuffle!(dl)
 end
 
-function Dataloader(ds::MPISintelDataset, training::Bool; batch_size::Int=1, crop_size::Int=128, scale=0, J=0, σ::Union{<:Real,Tuple,Vector}=5)
+function Dataloader(ds::MPISintelDataset, training::Bool; batch_size::Int=1, crop_size::Int=128, scale=0, J=0, σ::Union{<:Real,Tuple,Vector}=5, device=identity)
 	σ′ = Float32.((scale+1) .* σ./255)
 	faugment(F) = training ? augment(F, crop_size) : F
-	xfrm(Fb) = transform(faugment, Fb, σ′, scale, J)
+	blur_ops = (ConvGaussian(1; groups=size(ds[1].frame0,3), stride=2, device=device),
+		ConvGaussian(1; groups=2, stride=2, device=device),
+		ConvGaussian(1; groups=1, stride=2, device=device))
+	xfrm(Fb) = transform(faugment, Fb, σ′, scale, J, blur_ops; device=device)
 	# transform on list of FlowSamples
 	dl = Dataloader(ds, xfrm, batch_size, 1:length(ds))
 	shuffle!(dl)
@@ -221,7 +224,7 @@ function augment(F::FlowSample, crop_size)
 	return F
 end
 
-function transform(f_augment::Function, Fb::Vector{FlowSample}, σ, scale, J) 
+function transform(f_augment::Function, Fb::Vector{FlowSample}, σ, scale, J, blur_ops; device=identity) 
 	# batch
 	Fb = cat(f_augment.(Fb)..., dims=4)
 
@@ -233,11 +236,14 @@ function transform(f_augment::Function, Fb::Vector{FlowSample}, σ, scale, J)
 	pad = calcpad(size(Fb.frame0)[1:2], 2^(scale+J))
 	Fb = broadcast!(x->pad_reflect(x, pad, dims=(1,2)), Fb)
 
+	Fb = Fb |> device
+
 	# blur to scale
-	H = ConvGaussian(1; stride=2)
 	for i ∈ 1:scale
-		Fb = broadcast!(H, Fb)
-		Fb.flows ./= 2
+		Fb.frame0 = blur_ops[1](Fb.frame0)
+		Fb.frame1 = blur_ops[1](Fb.frame1)
+		Fb.flows  = blur_ops[2](Fb.flows) ./ 2f0
+		Fb.masks  = blur_ops[3](Fb.masks)
 	end
 
 	# create gaussian pyramid
@@ -246,8 +252,8 @@ function transform(f_augment::Function, Fb::Vector{FlowSample}, σ, scale, J)
 	flows = [Fb.flows]
 	masks = [Fb.masks]
 	for j ∈ 1:J
-		push!(flows, H(flows[j])./2)
-		push!(masks, H(masks[j]))
+		push!(flows, blur_ops[2](flows[j]) ./ 2f0)
+		push!(masks, blur_ops[3](masks[j]))
 	end
 
 	return FlowSample(frame0, frame1, flows, masks)

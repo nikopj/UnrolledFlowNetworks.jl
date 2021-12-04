@@ -43,7 +43,7 @@ Base.getindex(πn::PiBCANet, k) = πn.net[k]
                               Constructors 
 =============================================================================#
 
-function BCANet(K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1; W₀=randn(Float32,P,P,2,M), init=true)
+function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=randn(Float32,P,P,2,M), init=true)
 	padl, padr = ceil(Int,(P-s)/2), floor(Int,(P-s)/2)
 	pad = (padl, padr, padl, padr)
 	A = ntuple(i->Conv(copy(W₀), false; pad=pad, stride=s), K)
@@ -64,15 +64,14 @@ function BCANet(K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1; W₀=randn
 	∇ = Conv(sobelkernel()[1], false; pad=1)
 	return BCANet(A, Bᵀ, τ, λ, K, M, P, s, ∇)
 end
-BCANet(;K=10, M=16, P=7, s=1, λ₀=1f-1, kws...) = BCANet(K,M,P,s,λ₀; kws...)
 
-function PiBCANet(W::Int, shared::Bool, args...; init=true)
-	net₀ = BCANet(args...; init=init)
+function PiBCANet(; W::Int=0, shared::Bool=true, init=true, kws...)
+	net₀ = BCANet(; kws..., init=init)
 	if shared
 		net = ntuple(w->net₀, W+1)
 	else
 		W₀ = copy(net₀.A[1].weight)
-		net = ntuple(w->BCANet(args...; W₀=W₀, init=false), W+1)
+		net = ntuple(w->BCANet(; kws..., W₀=W₀, init=false), W+1)
 	end
 	return PiBCANet(net)
 end
@@ -101,16 +100,18 @@ function (net::BCANet)(u₀, u₁, v̄, w)
 	return v, w
 end
 
-function (πnet::PiBCANet)(u₀, u₁, J::Int; stopgrad=false, retflows=false)
+function (πnet::PiBCANet)(u₀, u₁, J::Int; stopgrad=false, retflows=false, blur_op=missing)
 	u₀, u₁, preparams = preprocess(u₀, u₁, 2^(J+πnet.s÷2))
 
 	# construct Gaussian pyramid
 	pyramid = Matrix{typeof(u₀)}(undef, (J+1,2))
 	Zygote.ignore() do 
-		H = ConvGaussian(1; stride=2)
+		if ismissing(blur_op)
+			blur_op = ConvGaussian(1; groups=size(u₀,3), stride=2, device=(u₀ isa CuArray) ? gpu : cpu)
+		end
 		pyramid[1,:] = [u₀, u₁]
 		for j ∈ 1:J
-			pyramid[j+1,:] = H.(pyramid[j,:])
+			pyramid[j+1,:] = blur_op.(pyramid[j,:])
 		end
 	end
 	

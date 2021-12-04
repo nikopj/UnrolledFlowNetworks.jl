@@ -2,7 +2,8 @@ using UnrolledFlowNetworks, Flux, CUDA, FileIO
 CUDA.allowscalar(false)
 
 # get argument filename and device
-fn = ARGS[1]
+#fn = ARGS[1]
+fn = "scripts/args.yml"
 device = CUDA.functional() ? begin @info "Using GPU."; gpu end : cpu
 
 args = loadargs(fn)
@@ -10,13 +11,14 @@ mkpath(args[:train][:savedir])
 
 # instantiate network
 loadingckpt = args[:ckpt] ≠ nothing && isfile(args[:ckpt])
-net = PiBCANet(args[:net]...; init=!loadingckpt) |> device
+net = PiBCANet(; args[:net]..., init=!loadingckpt) |> device
 @show net
 
 # instantiate optimizer, load data
 opt = ADAM(args[:opt][:η]) |> device
-loaders = getMPISintelLoaders(args[:data][:root]; args[:data][:params]...)
-@show loaders
+# @warn "NOT LOADING DATA. FIX BEFORE SUBMITTING JOBS!"
+loaders = getMPISintelLoaders(args[:data][:root]; args[:data][:params]..., device=device)
+# @show loaders
 
 start = 1
 if loadingckpt
@@ -30,6 +32,7 @@ end
 train!(net, loaders, opt; start=start, device=device, args[:train]...)
  
 # save updated argument file
-args[:ckpt] = joinpath(args[:train][:savedir], "net.bson")
-saveargs(fn, args)
+@warn "NOT SAVING CKPT. FIX BEFORE SUBMITTING JOBS!"
+# args[:ckpt] = joinpath(args[:train][:savedir], "net.bson")
+# saveargs(fn, args)
 
