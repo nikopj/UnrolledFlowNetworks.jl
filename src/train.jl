@@ -13,7 +13,7 @@ function agradnorm(∇::Zygote.Grads)
 	return agnorm / i
 end
 
-function passthrough!(net, data::Dataloader, training=false; β=10f0, opt=missing, desc="", verbose=true, clipnorm=Inf, stopgrad=true, device=identity)
+function passthrough!(net, data::Dataloader, training=false; α=4f0, β=10f0, opt=missing, desc="", verbose=true, clipnorm=Inf, stopgrad=true, device=identity)
 	training && @assert(!ismissing(opt),"Optimizer is required if training.") 
 	if training && !isa(clipnorm, Bool) && clipnorm < Inf
 		opt = Optimiser(ClipNorm(Float32(clipnorm)), opt)
@@ -24,23 +24,24 @@ function passthrough!(net, data::Dataloader, training=false; β=10f0, opt=missin
 	ρ⃗ = zeros(length(data));  # loss history
 	Θ = params(net)
 	norm∇L = 0
-	blur_op = ConvGaussian(1; groups=size(data[1].frame0,3), stride=2, device=device)
 
 	for (i,F) ∈ enumerate(data)
 		J = length(F.flows)-1
 		if training
-			∇L = gradient(Θ) do
-				flows = net(F.frame0, F.frame1, J; stopgrad=stopgrad, retflows=true, blur_op=blur_op)
-				ρ = PiLoss(L1Loss, β, flows, F.flows, F.masks)
+			#∇L = gradient(Θ) do
+			ρ, pullback = Zygote.pullback(Θ) do
+				flows = net(F.frame0, F.frame1, J; stopgrad=stopgrad, retflows=true)
+				loss  = PiLoss(L1Loss, α, β, flows, F.flows, F.masks)
 			end
-			update!(opt, Θ, ∇L)
+			∇L = pullback(1f0)
 			norm∇L = verbose ? agradnorm(∇L) : 0
+			update!(opt, Θ, ∇L)
 			Π!(net)
 		else 
-			flow = net(F.frame0, F.frame1, J; retflows=false, blur_op=blur_op)
-			ρ = EPELoss(flow, F.flows[1], F.masks[1])
+			flow = net(F.frame0, F.frame1, J; retflows=false)
+			ρ = EPELoss(flow, F.flows[1], ones(size(F.masks[1])) |> device)
 		end
-		if isnan(ρ) || ρ > 100
+		if isnan(ρ) || ρ > 1e3
 			@warn "passthrough!: NaN or large (>100) loss encountered"
 			return NaN
 		end
@@ -48,7 +49,7 @@ function passthrough!(net, data::Dataloader, training=false; β=10f0, opt=missin
 		if verbose
 			values = [(:loss, @sprintf("%.3e",ρ)), (:avgloss, @sprintf("%.3e",mean(ρ⃗[1:i])))]
 			training && push!(values, (:avg_norm∇L, @sprintf("%.3e",norm∇L)))
-			#training && push!(values, (:test, @sprintf("This should be changing if weights are updating... %.3e",net[2].A[2].weight[20])))
+			push!(values, (:test, @sprintf("This should be changing if weights are updating... %.3e",sum(net[1].A[end].weight))))
 		end
 		meter.next!(P; showvalues = verbose ? values : [])
 	end
@@ -56,17 +57,20 @@ function passthrough!(net, data::Dataloader, training=false; β=10f0, opt=missin
 end
 
 # -- Pyramid Iterative Loss (PiLoss) --
-function PiLoss(Loss::Function, β::AbstractFloat, flows, flows_gt, masks) 
+function PiLoss(Loss::Function, α::T, β::T, flows, flows_gt, masks) where {T <: AbstractFloat}
 	J, W = size(flows) .- 1
 	loss = 0
 	for j=0:J, w=0:W
-		loss += 4f0^(-j)*β^(-W+w)*Loss(flows[j+1,w+1], flows_gt[j+1], masks[j+1])
+		loss = loss + α^(-j)*β^(-W+w)*Loss(flows[j+1,w+1], flows_gt[j+1], masks[j+1])
 	end
 	return loss
 end
-PiLoss(f, β::Real, args...) = PiLoss(f, Float32(β), args...)
-EPELoss(v′,v,M) = mean(√, sum(abs2, M.*(v′.-v), dims=3) .+ 1f-7)
-L1Loss(v′,v,M)  = mean(abs, M.*(v′.-v))
+PiLoss(f, α::Real, β::Real, args...) = PiLoss(f, Float32(α), Float32(β), args...)
+EPELoss(x,y,M) = mean(√, sum(abs2, M.*(x-y), dims=3) .+ 1f-7)
+L1Loss(x,y,M)  = mean(abs, M.*(x-y))
+# @warn "EPE and L1Loss are without Masks."
+#EPELoss(v′,v,M) = mean(√, sum(abs2, v′ - v, dims=3) .+ 1f-3)
+#L1Loss(v′,v,M)  = mean(abs, v′ - v )
 
 function train!(net, loaders, opt; epochs=1, Δval=5, start=1, savedir="./", verbose=true, δ=0.5, γ=0.99, Δsched=1, device=identity, kws...)
 	@assert δ < 1 "Backtracking multiplier δ=$δ≮1"
@@ -148,13 +152,12 @@ function train!(net, loaders, opt; epochs=1, Δval=5, start=1, savedir="./", ver
 		♪ += 1
 	end
 
-	@warn "NOT TESTING. UPDATE BEFORE SUBMITTING JOBS"
 	# -- test --
-	# if :tst ∈ keys(loaders)
-	# 	ρ⃗ = passthrough!(net, loaders[:tst]; desc="TST:", verbose=verbose, kws...)
-	# 	ρ̄ = mean(ρ⃗)
-	# 	log(joinpath(savedir, "tst.csv"), @sprintf("%s, %.3f\n", loaders[:tst].dataset.name, ρ̄))
-	# end
+	if :tst ∈ keys(loaders)
+		ρ⃗ = passthrough!(net, loaders[:tst]; desc="TST:", verbose=verbose, kws...)
+		ρ̄ = mean(ρ⃗)
+		log(joinpath(savedir, "tst.csv"), @sprintf("%s, %.3f\n", loaders[:tst].dataset.name, ρ̄))
+	end
 
 	return nothing
 end

@@ -20,8 +20,9 @@ end
 Flux.@functor BCANet
 Flux.trainable(n::BCANet) = (n.A,n.Bᵀ,n.λ,n.τ)
 
-struct PiBCANet{K,N}
+struct PiBCANet{K,N,C}
 	net::NTuple{K,N}
+	H::C
 end
 Flux.@functor PiBCANet
 Flux.trainable(πn::PiBCANet) = (πn.net)
@@ -59,7 +60,7 @@ function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=rand
 			Bᵀ[k].weight ./= sqrt(L)
 		end
 	end
-	τ = ntuple(i->1f0*ones(Float32,1,1,1,1), K)
+	τ = ntuple(i->0.95f0*ones(Float32,1,1,1,1), K)
 	λ = ntuple(i->Float32(λ₀)*ones(Float32,1,1,M,1), K)
 	∇ = Conv(sobelkernel()[1], false; pad=1)
 	return BCANet(A, Bᵀ, τ, λ, K, M, P, s, ∇)
@@ -73,7 +74,8 @@ function PiBCANet(; W::Int=0, shared::Bool=true, init=true, kws...)
 		W₀ = copy(net₀.A[1].weight)
 		net = ntuple(w->BCANet(; kws..., W₀=W₀, init=false), W+1)
 	end
-	return PiBCANet(net)
+	H = ConvGaussian(1; stride=2)
+	return PiBCANet(net, H)
 end
 
 #=============================================================================
@@ -84,8 +86,7 @@ end
 function (net::BCANet)(u₀, u₁, v̄, w)
 	∇u = net.∇(u₁)
 	b  = u₁ - u₀ - sum(∇u.*v̄, dims=3)
-	α  = sum(abs2, ∇u, dims=3) .+ 1f-7
-	∇ū = ∇u./α
+	α  = sum(abs2, ∇u, dims=3)
 	vᵏ = v̄
 	v  = v̄
 	for k ∈ 1:net.K
@@ -94,24 +95,23 @@ function (net::BCANet)(u₀, u₁, v̄, w)
 		# primal update
 		vᵏ= v
 		x = v - net.τ[k].*net.Bᵀ[k](w)
-		r = sum(abs2, ∇u.*x, dims=3) + b
-		v = x + ∇ū.*(ST(r, net.τ[k].*α) - r)
+		r = sum(∇u.*x, dims=3) + b
+		mask = Zygote.dropgrad( abs.(r) .≤ net.τ[k].*α )
+		#v = x + ∇ū.*(ST(r, net.τ[k].*α) - r)
+		v = x - ∇u.*(mask.*r./(α .+ 1f-7) + (1 .- mask).*net.τ[k].*sign.(r))
 	end
 	return v, w
 end
 
-function (πnet::PiBCANet)(u₀, u₁, J::Int; stopgrad=false, retflows=false, blur_op=missing)
+function (πnet::PiBCANet)(u₀, u₁, J::Int; stopgrad=false, retflows=false)
 	u₀, u₁, preparams = preprocess(u₀, u₁, 2^(J+πnet.s÷2))
 
 	# construct Gaussian pyramid
 	pyramid = Matrix{typeof(u₀)}(undef, (J+1,2))
 	Zygote.ignore() do 
-		if ismissing(blur_op)
-			blur_op = ConvGaussian(1; groups=size(u₀,3), stride=2, device=(u₀ isa CuArray) ? gpu : cpu)
-		end
 		pyramid[1,:] = [u₀, u₁]
 		for j ∈ 1:J
-			pyramid[j+1,:] = blur_op.(pyramid[j,:])
+			pyramid[j+1,:] = πnet.H.(pyramid[j,:])
 		end
 	end
 	
@@ -160,6 +160,7 @@ end
 Π!(t::AbstractArray) = clamp!(t, 0, Inf)
 function Π!(c::Union{Conv,ConvTranspose})
 	c.weight ./= max.(1, sqrt.(sum(abs2, c.weight, dims=(1,2))))
+	#c.weight .-= mean(c.weight, dims=(1,2))
 	return nothing
 end
 function Π!(n::BCANet)

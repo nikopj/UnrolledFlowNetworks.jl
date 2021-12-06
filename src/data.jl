@@ -152,7 +152,7 @@ end
 
 function getMPISintelLoaders(root::String; gray=false, batch_size=10, crop_size=128, σ=1, scale=0, J=0, device=identity)
 	@warn "NOT LOADING TRAINSET. UPDATE BEFORE SUBMITTING JOBS"
-	#ds_trn = MPISintelDataset(root; split="trn", gray=gray)
+	ds_trn = MPISintelDataset(root; split="trn", gray=gray)
 	ds_val = MPISintelDataset(root; split="val", gray=gray)
 	dl_trn = Dataloader(ds_val, true; batch_size=batch_size, crop_size=crop_size, scale=scale, J=J, σ=σ, device=device)
 	dl_val = Dataloader(ds_val, false; batch_size=1, scale=scale, J=J, σ=0, device=device)
@@ -173,14 +173,13 @@ function Dataloader(ds::AbstractDataset, transform::Function, bs::Int)
 	shuffle!(dl)
 end
 
-function Dataloader(ds::MPISintelDataset, training::Bool; batch_size::Int=1, crop_size::Int=128, scale=0, J=0, σ::Union{<:Real,Tuple,Vector}=5, device=identity)
+function Dataloader(ds::MPISintelDataset, training::Bool; batch_size::Int=1, crop_size::Int=128, scale=0, J=0, σ::Union{<:Real,Tuple,Vector}=0, device=identity)
 	σ′ = Float32.((scale+1) .* σ./255)
 	faugment(F) = training ? augment(F, crop_size) : F
 	blur_ops = (ConvGaussian(1; groups=size(ds[1].frame0,3), stride=2, device=device),
 		ConvGaussian(1; groups=2, stride=2, device=device),
 		ConvGaussian(1; groups=1, stride=2, device=device))
 	xfrm(Fb) = transform(faugment, Fb, σ′, scale, J, blur_ops; device=device)
-	# transform on list of FlowSamples
 	dl = Dataloader(ds, xfrm, batch_size, 1:length(ds))
 	shuffle!(dl)
 end

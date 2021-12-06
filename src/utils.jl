@@ -65,12 +65,17 @@ end
 gaussiankernel(σ, m=ceil(Int,6σ-1)) = gaussiankernel(Float32, σ, m)
 
 function ConvGaussian(T::Type, σ::Real; groups=1, stride=1, device=identity)
-	h = gaussiankernel(T, σ) |> x->repeat(x, 1,1,1,groups) |> device
+	P = ceil(Int, 6σ-1)
+	if stride==2 && P%2!=0
+		P += 1
+	end
+	h = gaussiankernel(T, σ, P) |> x->repeat(x, 1,1,1,groups) |> device
 	P = size(h,1)
+	pad = (P-stride)÷2
 	padl, padr = ceil(Int,(P-stride)/2), floor(Int,(P-stride)/2)
 	pad = (padl, padr, padl, padr)
-	H(x) = conv(x, h; pad=pad, stride=stride, groups=groups)
-	return H
+	#H(x) = conv(x, h; pad=pad, stride=stride, groups=groups)
+	return Conv(h, false; pad=pad, stride=stride, groups=groups)
 end
 ConvGaussian(σ::Real; kws...) = ConvGaussian(Float32, σ; kws...)
 
@@ -131,18 +136,6 @@ function warp_nearest(img, flow)
 	return dst
 end
 
-function get_gridpts(u0::T,v0::T,u1::T,v1::T,c,b) where {T<:CuArray}
-	return cartesian4(u0,v0, c, b), cartesian4(u0,v1, c, b), cartesian4(u1,v0, c, b), cartesian4(u1,v1, c, b)
-end
-
-function get_gridpts(u0::T,v0::T,u1::T,v1::T,c,b) where {T<:Array}
-	index00 = CartesianIndex{4}.(u0, v0, c, b)
-	index01 = CartesianIndex{4}.(u0, v1, c, b)
-	index10 = CartesianIndex{4}.(u1, v0, c, b)
-	index11 = CartesianIndex{4}.(u1, v1, c, b)
-	return index00, index01, index10, index11
-end
-
 function warp_bilinear(img, flow)
 	M, N, C, B = size(img)
 	x, y, c, b = ndgrid(1:M, 1:N, 1:C, 1:B) .|> Zygote.dropgrad
@@ -157,13 +150,19 @@ function warp_bilinear(img, flow)
 	u1 = clamp.(ceil.(Int32,  u), Int32(1), Int32(M)) 
 	v1 = clamp.(ceil.(Int32,  v), Int32(1), Int32(N)) 
 
-	pts = get_gridpts(u0,v0,u1,v1,c,b)
+	local index00, index01, index10, index11
+	Zygote.ignore() do
+		index00 = CartesianIndex{4}.(u0, v0, c, b)
+		index01 = CartesianIndex{4}.(u0, v1, c, b)
+		index10 = CartesianIndex{4}.(u1, v0, c, b)
+		index11 = CartesianIndex{4}.(u1, v1, c, b)
+	end
 	
 	# function values
-	f00 = NNlib.gather(img, pts[1]) 
-	f01 = NNlib.gather(img, pts[2]) 
-	f10 = NNlib.gather(img, pts[3]) 
-	f11 = NNlib.gather(img, pts[4]) 
+	f00 = NNlib.gather(img, index00) 
+	f01 = NNlib.gather(img, index01) 
+	f10 = NNlib.gather(img, index10) 
+	f11 = NNlib.gather(img, index11) 
 	
 	# interpolation coefficients
 	c00 = (u1 - u).*(v1 - v) 
@@ -172,36 +171,6 @@ function warp_bilinear(img, flow)
 	c11 = (u - u0).*(v - v0) 
 
 	return c00.*f00 + c01.*f01 + c10.*f10 + c11.*f11
-end
-
-function cartesian4_kernel!(dst, max_idx, s1, s2, s3, s4)
-	index = threadIdx().x + (blockIdx().x - 1) * blockDim().x
-
-	@inbounds if index <= max_idx
-		dst[index] = CartesianIndex(s1[index], s2[index], s3[index], s4[index])
-	end
-	return nothing
-end
-
-function cartesian4!(dst::CuArray{CartesianIndex{4}}, sources...)
-	max_idx = length(dst)
-	args = (dst, max_idx, sources...)
-	kernel = @cuda launch=false cartesian4_kernel!(args...)
-
-	config = launch_configuration(kernel.fun; max_threads=256)
-	threads = min(max_idx, config.threads)
-	blocks = cld(max_idx, threads)
-	kernel(args...; threads=threads, blocks=blocks)
-	return dst
-end
-
-function cartesian4(sources...)
-	local dst
-	Zygote.ignore() do
-		dst = CuArray{CartesianIndex{4}}(undef, size(sources[1]))
-		cartesian4!(dst, sources...)
-	end
-	return dst
 end
 
 #=============================================================================

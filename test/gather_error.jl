@@ -1,6 +1,5 @@
 using NNlib, NNlibCUDA, CUDA, Zygote, Flux
 using OMEinsum
-using ForwardDiff
 using Printf
 import UnrolledFlowNetworks as ufn
 CUDA.allowscalar(false)
@@ -32,7 +31,7 @@ function net1(W,x,flow)
 	#flow = flow1 + flow2
 	#@show flow
 	#z = NNlib.gather(img, flow)
-	#@ein z[m,n,i,j] := W[m,k,1,1]*z[k,n,i,j]
+	@ein z[m,n,i,j] := W[m,k,1,1]*z[k,n,i,j]
 	return z
 end
 
