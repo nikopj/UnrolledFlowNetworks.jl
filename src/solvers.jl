@@ -23,18 +23,18 @@ function powermethod(A::Function, b::AbstractArray; maxit=100, tol=1e-3, verbose
 	return λ, b, flag
 end
 
-function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; maxit=100, tol=1e-2, verbose=true, device=identity) 
+function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; γ=0, β=1, maxit=100, tol=1e-2, verbose=true, device=identity) 
 	M, N, _, _ = size(u₀)
 	T = eltype(u₀)
 
 	λ = T(λ)
 	# step-sizes
-	τ = T(0.99 / sqrt(8))
-	σ = T(0.99 / sqrt(8))
+	τ = T(0.99)
+	σ = T(0.99)
 
 	# init conv operators
-	W, _ = sobelkernel(T)
-	Wd = repeat(W, 1,1,1,2)
+	W, _ = cdkernel(T) 
+	Wd = repeat(W, 1,1,1,2) ./ sqrt(8f0)
 	D  = Conv(Wd; pad=1, groups=2) |> device
 	Dᵀ = ConvTranspose(Wd; pad=1, groups=2) |> device
 	W = device(W)
@@ -50,10 +50,16 @@ function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; maxit=100, tol=1e-2, v
 	end
 	residual = zeros(maxit)  
 
-	∇u = conv(u₁, W; pad=1)               # (M,N,2,1)
-	b  = u₁ - u₀ - sum(∇u.*v̄, dims=3)     # (M,N,1,1)
-	α = sum(abs2, ∇u, dims=3)             # (M,N,1,1)
+	∇u₁ = conv(u₁, W; pad=1)               # (M,N,2,1)
+	∇u₀ = conv(u₀, W; pad=1)               # (M,N,2,1)
+	b  = u₁ - u₀ - sum(∇u₁.*v̄, dims=3)     # (M,N,1,1)
+	α = sum(abs2, ∇u₁, dims=3)             # (M,N,1,1)
 	η = τ.*α
+
+	# image driven regularization
+	α₀ = mapslices(norm, ∇u₀, dims=3)
+	E = exp.(-γ.*(α₀.^β))
+	λ = λ.*(E .+ 1e-3)
 
 	k = 0
 	while k == 0 || k < maxit && residual[k] > tol
@@ -65,10 +71,10 @@ function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; maxit=100, tol=1e-2, v
 		vᵏ = v
 		# proximal gradient descent on primal
 		x = v - τ*Dᵀ(w)
-		r = sum(∇u.*x, dims=3) + b
-		#v = x + ∇u.*(ST(r, η) - r)./(α  .+ 1f-7)
+		r = sum(∇u₁.*x, dims=3) + b
+		#v = x + ∇u₁.*(ST(r, η) - r)./(α  .+ 1f-7)
 		mask = abs.(r) .≤ η
-		v = x - ∇u.*(mask.*r./(α .+ 1f-7) + (1 .- mask).*τ.*sign.(r))
+		v = x - ∇u₁.*(mask.*r./(α .+ 1f-7) + (1 .- mask).*τ.*sign.(r))
 
 		k += 1
 		residual[k] = norm(v - vᵏ)/norm(vᵏ)
@@ -79,20 +85,20 @@ function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; maxit=100, tol=1e-2, v
 	return v, w, residual[1:k]
 end
 
-function TVL1_VCA(u₀, u₁, λ, v̄=missing, dual_vars=missing; maxit=100, tol=1e-2, verbose=true, device=identity)
+function TVL1_VCA(u₀, u₁, λ, v̄=missing, dual_vars=missing; γ=0, β=1, maxit=100, tol=1e-2, verbose=true, device=identity)
 	M, N, C, _ = size(u₀)
 	T = eltype(u₀)
 
 	λ = T(λ)
 	# step-sizes
-	τ = T(0.99 / sqrt(8))
-	σ = T(0.99 / sqrt(8))
+	τ = T(0.99)
+	σ = T(0.99)
 	ρ = T(2)
 	η = τ/ρ
 
 	# init conv operators
-	W, _ = sobelkernel(T)
-	Wd = repeat(W, 1,1,1,2)
+	W, _ = cdkernel(T)
+	Wd = repeat(W, 1,1,1,2) ./ T(sqrt(8))
 	D  = Conv(Wd; pad=1, groups=2) |> device
 	Dᵀ = ConvTranspose(Wd; pad=1, groups=2) |> device
 	W = W |> device
@@ -110,9 +116,13 @@ function TVL1_VCA(u₀, u₁, λ, v̄=missing, dual_vars=missing; maxit=100, tol
 	else
 		t, s, w = dual_vars
 	end
-	# t = zeros(T,M,N,C,1)
-	# s = zeros(T,M,N,C,1)
 	residual = zeros(maxit)  
+
+	# image driven regularization
+	∇u₀ = permutedims(u₁, (1,2,4,3)) |> x->conv(x, W; pad=1) # (M,N,2,C)
+	α₀ = mapslices(norm, ∇u₀, dims=(3,4))
+	E = exp.(-γ.*(α₀.^β))
+	λ = λ.*(E .+ 1e-3)
 
 	# ADMM init
 	∇u = permutedims(u₁, (1,2,4,3)) |> x->conv(x, W; pad=1) # (M,N,2,C)
@@ -169,7 +179,7 @@ function TVL1_VCA(u₀, u₁, λ, v̄=missing, dual_vars=missing; maxit=100, tol
 	return v, (t,s,w), residual[1:k]
 end
 
-function flow_ictf(u₀, u₁, λ, J; maxwarp=0, verbose=true, tol=1e-3, maxit=100, tolwarp=1e-4) 
+function flow_ictf(u₀, u₁, λ, J; maxwarp=0, verbose=true, tolwarp=1e-4, kws...) 
 	TVL1 = size(u₀,3)==1 ? TVL1_BCA : TVL1_VCA
 
 	device = (u₀ isa CuArray && CUDA.functional()) ? gpu : cpu
@@ -191,7 +201,7 @@ function flow_ictf(u₀, u₁, λ, J; maxwarp=0, verbose=true, tol=1e-3, maxit=1
 		while w == 0 || w ≤ maxwarp && res > tolwarp
 			u₀, u₁ = pyramid[j+1]
 			ū₁ = (j==J && w==0) ? u₁ : warp_bilinear(u₁,v̄)
-			v, dual_var, tvres = TVL1(u₀, ū₁, λ, v̄, dual_var; maxit=maxit, tol=tol, verbose=false, device=device)
+			v, dual_var, tvres = TVL1(u₀, ū₁, λ, v̄, dual_var; verbose=false, device=device, kws...)
 			res = (w==0 && j==J) ? Inf : norm(v - v̄)/norm(v̄)
 			if verbose
 				@printf "j=%02d | w=%02d | res=%.2e | k=%03d | tvres[k]=%.2e \n" j w res length(tvres) tvres[end]

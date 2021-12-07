@@ -47,9 +47,9 @@ s) for
 use with NNlib's conv.
 """
 function fdkernel(T::Type=Float32)
-	W = zeros(T, 2,2,1,2)
-	W[:,:,1,1] = [1  0;-1 0];
-	W[:,:,1,2] = [1 -1; 0 0];
+	W = zeros(T, 3,3,1,2)
+	W[:,:,1,1] = [1  0  0;-1 0 0; 0 0 0];
+	W[:,:,1,2] = [1 -1  0; 0 0 0; 0 0 0];
 	Wᵀ = reverse(permutedims(W, (2,1,4,3)), dims=:);
 	return W, Wᵀ
 end
@@ -88,7 +88,7 @@ function sobelkernel(T::Type=Float32)
 end
 
 function ConvSobel(T::Type=Float32; stride=1)
-	h = sobelkernel(T)
+	h = sobelkernel(T)[1]
 	H(x) = conv(x, repeat(h,1,1,1,size(x,3)÷2); pad=1, stride=stride, groups=size(x,3)÷2)
 	return H
 end
@@ -177,7 +177,7 @@ end
                              Flow
 =============================================================================#
 
-function colorflow(flow::Array{T,4}, maxflow=maximum(mapslices(norm, flow, dims=3))) where {T}
+function colorflow(flow::Array{T,4}; maxflow=maximum(mapslices(norm, flow, dims=3))) where {T}
     CT = HSV{Float32}
     color(x1, x2) = ismissing(x1) || ismissing(x2) ?
         CT(0, 1, 0) :

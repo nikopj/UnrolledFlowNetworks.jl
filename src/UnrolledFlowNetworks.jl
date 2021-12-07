@@ -4,7 +4,6 @@ using Interpolations, OMEinsum, FFTW
 using Flux, NNlib, NNlibCUDA, Statistics, CUDA, LinearAlgebra, Zygote
 using Flux.Optimise: Optimiser, ClipNorm, ADAM, update!
 using LazyGrids
-using ForwardDiff: Dual
 using Images, Printf, FileIO
 using CSV, CSVFiles, BSON, DataFrames
 import YAML
@@ -15,7 +14,7 @@ using Random: shuffle
 using DelimitedFiles
 
 include("utils.jl")
-export loadargs, saveargs, warp_bilinear, ConvGaussian, colorflow, setrecursive!
+export loadargs, saveargs, warp_bilinear, ConvGaussian, ConvSobel, colorflow, setrecursive!
 
 include("solvers.jl")
 export flow_ictf

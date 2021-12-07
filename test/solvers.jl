@@ -11,7 +11,7 @@ root = "dataset/MPI_Sintel/training/clean/shaman_2/"
 device = CUDA.functional() ? begin @info "Using GPU."; gpu end : cpu
 # device = cpu
 
-gray = true
+gray = false
 T = CUDA.functional() ? Float32 : Float64
 # T = Float64
 
@@ -30,9 +30,9 @@ u₁ = tensorload(T , joinpath(root,"frame_0049.png"); gray=gray) |> device
 vgt= tensorload(T , "dataset/MPI_Sintel/training/flow/shaman_2/frame_0048.flo") |> device
 @show size(u₀), size(vgt)
 
-λ = 1e-1
+λ = 2e-1
 J = 5
-kws = Dict(:maxit=>1000, :maxwarp=>5, :tol=>1e-3, :tolwarp=>1e-4)
+kws = Dict(:γ=>0.3, :β=>1, :maxit=>40, :maxwarp=>5, :tol=>1e-3, :tolwarp=>1e-3)
 
 #v, res = ufn.TVL1_VCA(u₀,u₁,λ; maxit=10, tol=1e-3, verbose=true)
 
