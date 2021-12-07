@@ -2,8 +2,6 @@
 
 ## TODO
 - write dataloader for flying things, middleburry
-- unroll TVL1\_VCA
-- allow different supervised loss functions (deep supervision, gradient stopping, etc.)
-- train networks
-	- experiment with scales, warping per scale, and loss functions
-- write image-driven total generalized variation L1 optical flow
+- unroll TVL1\_VCA, TVL1\_FCA, image-driven smoothness prior
+- verify @ein is not falling back to loop implementation on GPU
+- experiment with weight decay

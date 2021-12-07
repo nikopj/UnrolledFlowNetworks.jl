@@ -82,6 +82,19 @@ end
                              Forward Method 
 =============================================================================#
 
+function shifted_ST1(x, A, b, α, τ) 
+	r = sum(A.*x, dims=3) + b
+	v = x + A.*(ST(r, τ.*α) - r)./(α .+ 1f-7)
+	return v
+end
+
+function shifted_ST2(x, A, b, α, τ)
+	r = sum(A.*x, dims=3) + b
+	mask = Zygote.dropgrad( abs.(r) .≤ τ.*α )
+	v = x - A.*(mask.*r./(α .+ 1f-7) + (1 .- mask).*τ.*sign.(r))
+	return v
+end
+
 # Unrolled TVL1-BCA 
 function (net::BCANet)(u₀, u₁, v̄, w)
 	∇u = net.∇(u₁)
@@ -94,11 +107,7 @@ function (net::BCANet)(u₀, u₁, v̄, w)
 		w = min.(net.λ[k], max.(-net.λ[k], w + net.A[k](2v - vᵏ)))
 		# primal update
 		vᵏ= v
-		x = v - net.τ[k].*net.Bᵀ[k](w)
-		r = sum(∇u.*x, dims=3) + b
-		mask = Zygote.dropgrad( abs.(r) .≤ net.τ[k].*α )
-		#v = x + ∇ū.*(ST(r, net.τ[k].*α) - r)
-		v = x - ∇u.*(mask.*r./(α .+ 1f-7) + (1 .- mask).*net.τ[k].*sign.(r))
+		v = shifted_ST2(v - net.τ[k].*net.Bᵀ[k](w), ∇u, b, α, net.τ[k])
 	end
 	return v, w
 end
