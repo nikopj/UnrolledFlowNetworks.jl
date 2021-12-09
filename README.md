@@ -1,7 +1,19 @@
 # Unrolled Primal Dual Spliting for Optical Flow Estimation
 
 ## TODO
-- write dataloader for flying things, middleburry
-- unroll TVL1\_VCA, TVL1\_FCA, image-driven smoothness prior
+- cleanup:
+	- separate modules
+- write dataloader for flying things, middleburry (3)
+- unroll TVL1\_VCA, TVL1\_FCA, image-driven smoothness prior (4)
+	- sigmoid weighted smoothness
 - verify @ein is not falling back to loop implementation on GPU
-- experiment with weight decay
+	- use tullio.jl?
+- write visualization code (0)
+	- filters
+	- training plots
+	- thresholds & step-sizes
+	- intermediate flows
+	- gt, flow\_hat, residual
+- experiment with weight decay (1)
+- get classical solver results (2)
+	- grid-search hyperparams

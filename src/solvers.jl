@@ -86,6 +86,22 @@ function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; γ=0, β=1, maxit=100,
 	return v, w, residual[1:k]
 end
 
+function pixel_admm_2matinv(A, ρ)
+	@ein F[m,n,i,j,b] := A[m,n,k,i,b]*A[m,n,k,j,b] # F = AᵀA
+	F .*= ρ                                        # F = ρAᵀA
+	E = similar(A)
+	CUDA.allowscalar() do                          # F = I + ρAᵀA
+		F[:,:,1:2,1:2,:] .+= [1 0; 0 1]            # E = (I + ρAᵀA)^-1
+		E[:,:,1,1,:] =  F[:,:,2,2,:]
+		E[:,:,1,2,:] = -F[:,:,1,2,:]
+		E[:,:,2,1,:] = -F[:,:,2,1,:]
+		E[:,:,2,2,:] =  F[:,:,1,1,:]
+		d = F[:,:,1,1,:].*F[:,:,2,2,:] - F[:,:,1,2,:].*F[:,:,2,1,:]
+		E ./= d
+	end
+	return E
+end
+
 function TVL1_VCA(u₀, u₁, λ, v̄=missing, dual_vars=missing; γ=0, β=1, maxit=100, tol=1e-2, verbose=true, device=identity)
 	M, N, C, _ = size(u₀)
 	T = eltype(u₀)
