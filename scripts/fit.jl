@@ -18,8 +18,9 @@ net = PiBCANet(; args[:net]..., init=!loadingckpt) |> device
 opt = ADAM(args[:opt][:η]) |> device
 
 # load data
+@warn "Only using VAL set. Change before submitting jobs."
 # ds_trn = MPISintelDataset(args[:data][:root], split="trn", gray=args[:data][:gray])
-ds_val = MPISintelDataset(args[:data][:root], split="val", gray=args[:data][:gray])
+# ds_val = MPISintelDataset(args[:data][:root], split="val", gray=args[:data][:gray])
 
 # build dataloaders
 dl_trn = Dataloader(ds_val, true; args[:data][:params]..., device=device)

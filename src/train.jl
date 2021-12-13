@@ -13,7 +13,7 @@ function agradnorm(∇::Zygote.Grads)
 	return agnorm / i
 end
 
-function passthrough!(net, data::Dataloader, training=false; α=4f0, β=10f0, opt=missing, desc="", verbose=true, clipnorm=Inf, stopgrad=true, device=identity)
+function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=4f0, β=10f0, opt=missing, desc="", verbose=true, clipnorm=Inf, stopgrad=true, device=identity)
 	training && @assert(!ismissing(opt),"Optimizer is required if training.") 
 	if training && !isa(clipnorm, Bool) && clipnorm < Inf
 		opt = Optimiser(ClipNorm(Float32(clipnorm)), opt)
@@ -25,15 +25,31 @@ function passthrough!(net, data::Dataloader, training=false; α=4f0, β=10f0, op
 	Θ = params(net)
 	norm∇L = 0
 
+	if weight_decay > 0
+		penalty = ()->0
+	else
+		penalty = ()-> begin 
+			local loss
+			loss = 0
+			for w ∈ 0:net.W, k ∈ 1:net.K
+				loss += sum(abs2, net[w+1].A[k].weight) + sum(abs2, net[w+1].Bᵀ[k].weight)
+				net.shared && k==K && break
+			end
+			return loss
+		end
+	end
+
 	for (i,F) ∈ enumerate(data)
+		local wdpen
 		J = length(F.flows)-1
 		if training
-			#∇L = gradient(Θ) do
-			ρ, pullback = Zygote.pullback(Θ) do
+			∇L = gradient(Θ) do
+			#ρ, pullback = Zygote.pullback(Θ) do
 				flows = net(F.frame0, F.frame1, J; stopgrad=stopgrad, retflows=true)
-				loss  = PiLoss(L1Loss, α, β, flows, F.flows, F.masks)
+				wdpen = penalty()
+				ρ     = PiLoss(L1Loss, α, β, flows, F.flows, F.masks) + weight_decay*wdpen
 			end
-			∇L = pullback(1f0)
+			#∇L = pullback(1f0)
 			norm∇L = verbose ? agradnorm(∇L) : 0
 			update!(opt, Θ, ∇L)
 			Π!(net)
@@ -49,6 +65,7 @@ function passthrough!(net, data::Dataloader, training=false; α=4f0, β=10f0, op
 		if verbose
 			values = [(:loss, @sprintf("%.3e",ρ)), (:avgloss, @sprintf("%.3e",mean(ρ⃗[1:i])))]
 			training && push!(values, (:avg_norm∇L, @sprintf("%.3e",norm∇L)))
+			training && push!(values, (:weight_decay, @sprintf("%.3e", wdpen)))
 			push!(values, (:test, @sprintf("This should be changing if weights are updating... %.3e",sum(net[1].A[end].weight))))
 		end
 		meter.next!(P; showvalues = verbose ? values : [])
