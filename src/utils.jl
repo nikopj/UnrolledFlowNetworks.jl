@@ -2,10 +2,10 @@
 utils.jl
 =#
 
-ST(x,τ) = sign.(x).*max.(0, abs.(x).-τ);       # soft-thresholding
-pixeldot(x,y) = sum(x.*y, dims=(3,4))          # dot-product of 4D pixel vectors
+ST(x,τ) = sign.(x).*max.(0, abs.(x).-τ);	   # soft-thresholding
+pixeldot(x,y) = sum(x.*y, dims=(3,4))		   # dot-product of 4D pixel vectors
 pixelnorm(x) = sqrt.(sum(abs2, x, dims=(3,4))) # 2-norm on 4D image-tensor pixel-vectors
-BT(x,τ) = max.(0, 1 .- τ./pixelnorm(x)).*x     # Block-thresholding of 4D pixel vectors
+BT(x,τ) = max.(0, 1 .- τ./pixelnorm(x)).*x	   # Block-thresholding of 4D pixel vectors
 
 #=============================================================================
                      Preprocessing and Postprocessing
@@ -40,7 +40,7 @@ end
 =============================================================================#
 
 """
-    fdkernel(T::Type)
+	fdkernel(T::Type)
 
 Return 2D forward difference convolution kernels (analysis and synthesi
 s) for
@@ -48,8 +48,8 @@ use with NNlib's conv.
 """
 function fdkernel(T::Type=Float32)
 	W = zeros(T, 3,3,1,2)
-	W[:,:,1,1] = [1  0  0;-1 0 0; 0 0 0];
-	W[:,:,1,2] = [1 -1  0; 0 0 0; 0 0 0];
+	W[:,:,1,1] = [1  0	0;-1 0 0; 0 0 0];
+	W[:,:,1,2] = [1 -1	0; 0 0 0; 0 0 0];
 	Wᵀ = reverse(permutedims(W, (2,1,4,3)), dims=:);
 	return W, Wᵀ
 end
@@ -178,13 +178,17 @@ end
 =============================================================================#
 
 function colorflow(flow::Array{T,4}; maxflow=maximum(mapslices(norm, flow, dims=3))) where {T}
-    CT = HSV{Float32}
-    color(x1, x2) = ismissing(x1) || ismissing(x2) ?
-        CT(0, 1, 0) :
-        CT(180f0/π * atan(x1, x2), norm((x1, x2)) / maxflow, 1)
-    x1 = selectdim(flow, 3, 1)
-    x2 = selectdim(flow, 3, 2)
-    return color.(x1, x2)
+	CT = HSV{Float32}
+	color(x1, x2) = ismissing(x1) || ismissing(x2) ?
+		CT(0, 1, 0) :
+		CT(180f0/π * atan(x1, x2), norm((x1, x2)) / maxflow, 1)
+	x1 = selectdim(flow, 3, 1)
+	x2 = selectdim(flow, 3, 2)
+	out = color.(x1, x2)
+	if size(out, 3) == 1
+		return out[:,:,1]
+	end
+	return out
 end
 
 #=============================================================================

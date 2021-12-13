@@ -9,9 +9,6 @@
 - verify @ein is not falling back to loop implementation on GPU
 	- use tullio.jl?
 - write visualization code (0)
-	- filters
-	- training plots
-	- thresholds & step-sizes
 	- intermediate flows
 	- gt, flow\_hat, residual
 - experiment with weight decay (1)
