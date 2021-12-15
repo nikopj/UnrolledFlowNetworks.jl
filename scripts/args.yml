@@ -10,12 +10,12 @@ train:
   α: 1
   Δval: 2
   epochs: 10
-  Δsched: 
+  Δsched: 100
   δ: 0.5
   weight_decay: 0
 ckpt: 
 net:
-  W: 5          # Warps per scale
+  W: 1          # Warps per scale
   shared: false # BCANet sharing
   K: 20         # itrs per module
   M: 4          # num filters
@@ -26,8 +26,8 @@ data:
   params:
     σ: 1
     batch_size: 1
-    J: 3
-    crop_size: 128
+    J: 2
+    crop_size: 64
     scale: 0
   root: "dataset/MPI_Sintel/"
   gray: true
