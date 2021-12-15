@@ -12,7 +12,6 @@ curves = training_curves(save_dir)
 fig1, _, _ = plot_training_curves(curves)
 save(joinpath(save_dir,"training.png"), fig1)
 
-
 # args = loadargs(joinpath(save_dir, "args.yml"))
 ckpt = load(joinpath(save_dir, "net.bson"))
 net = ckpt[:net]

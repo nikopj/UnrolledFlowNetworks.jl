@@ -9,7 +9,7 @@ for ((i=$2; i<=$3; i++)); do
 	sed "s/${model}/${model}${ver}/" args.d/${model}.yml > args.d/${model}${ver}.yml
 done
 
-cat > job.sh << EOF
+cat > scripts/job.sh << EOF
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -29,4 +29,4 @@ cd /scratch/npj226/UnrolledFlowNetworks
 julia --project=. scripts/fit.jl args.d/${1}-\${SLURM_ARRAY_TASK_ID}${ver}.yml
 EOF
 
-sbatch job.sh
+sbatch scripts/job.sh

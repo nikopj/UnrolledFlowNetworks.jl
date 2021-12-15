@@ -20,8 +20,8 @@ end
 Flux.@functor BCANet
 Flux.trainable(n::BCANet) = (n.A,n.Bᵀ,n.λ,n.τ)
 
-struct PiBCANet{K,N,C}
-	net::NTuple{K,N}
+struct PiBCANet{N, C}
+	net::Matrix{N}
 	H::C
 end
 Flux.@functor PiBCANet
@@ -30,15 +30,19 @@ Flux.trainable(πn::PiBCANet) = (πn.net)
 # aliases 
 function Base.getproperty(πn::PiBCANet, s::Symbol) 
 	if s == :W
-		return length(πn.net) - 1
-	elseif s == :shared
-		return πn.net[1] == πn.net[end]
+		return size(πn.net,2) - 1
+	elseif s == :J
+		return size(πn.net,1) - 1
+	elseif s == :shared_iter
+		return πn.net[1,1] == πn.net[1,end]
+	elseif s == :shared_scale
+		return πn.net[1,1] == πn.net[end,1]
 	elseif s ∈ [:K, :M, :P, :s]
 		return getfield(πn.net[1], s)
 	end
 	return getfield(πn,s)
 end
-Base.getindex(πn::PiBCANet, k) = πn.net[k]
+Base.getindex(πn::PiBCANet, k...) = πn.net[k...]
 
 #=============================================================================
                               Constructors 
@@ -66,14 +70,33 @@ function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=rand
 	return BCANet(A, Bᵀ, τ, λ, K, M, P, s, ∇)
 end
 
-function PiBCANet(; W::Int=0, shared::Bool=true, init=true, kws...)
-	net₀ = BCANet(; kws..., init=init)
-	if shared
-		net = ntuple(w->net₀, W+1)
-	else
-		W₀ = copy(net₀.A[1].weight)
-		net = ntuple(w->BCANet(; kws..., W₀=W₀, init=false), W+1)
+function PiBCANet(; J=0, W=0, shared_iter::Bool=true, shared_scale::Bool=true, init=true, kws...)
+	# initialize dictionaries with first order derivative stencil
+	P, M = kws[:P], kws[:M]
+	W₀ = zeros(Float32, P, P, 2, M)
+	c = (kws[:P] - 1) ÷ 2 + 1
+	W₀[c-1:c+1, c, 1, 1:M÷2] = repeat([-1; 0; 1], 1, 1, 1, M÷2)
+	W₀[c, c-1:c+1, 2, M÷2+1:end] = repeat([-1 0 1], 1, 1, 1, M÷2)
+	
+	net  = Matrix{BCANet}(undef, (J+1, W+1))
+	net[1,1] = BCANet(; kws..., W₀=copy(W₀), init=true)
+	W₀ = net[1,1].A[1].weight
+
+	if shared_iter && shared_scale
+		for j=0:J, w=0:W; net[j+1,w+1] = net[1,1]; end
+	elseif shared_iter && !shared_scale
+		for j=0:J
+			net[j+1,1] = BCANet(; kws..., W₀=copy(W₀), init=false)
+			for w=1:W; net[j+1,w+1] = net[j+1,1]; end
+		end
+	elseif !shared_iter && shared_scale
+		@error "Not Implemented"
+	elseif !shared_iter && !shared_scale
+		for j=0:J, w=0:W
+			net[j+1,w+1] = BCANet(; kws..., W₀=copy(W₀), init=false)
+		end
 	end
+
 	H = ConvGaussian(1; stride=2)
 	return PiBCANet(net, H)
 end
@@ -100,13 +123,11 @@ function (net::BCANet)(u₀, u₁, v̄, w)
 	∇u = net.∇(u₁)
 	b  = u₁ - u₀ - sum(∇u.*v̄, dims=3)
 	α  = sum(abs2, ∇u, dims=3)
-	vᵏ = v̄
 	v  = v̄
 	for k ∈ 1:net.K
 		# dual update
-		w = min.(net.λ[k], max.(-net.λ[k], w + net.A[k](2v - vᵏ)))
+		w = min.(net.λ[k], max.(-net.λ[k], w + net.A[k](v)))
 		# primal update
-		vᵏ= v
 		v = shifted_ST2(v - net.τ[k].*net.Bᵀ[k](w), ∇u, b, α, net.τ[k])
 	end
 	return v, w
@@ -144,7 +165,7 @@ function (πnet::PiBCANet)(u₀, u₁, J::Int; stopgrad=false, retflows=false)
 		u₀, u₁ = pyramid[j+1,:]
 		for w ∈ 0:πnet.W
 			ū₁ = (j==J && w==0) ? u₁ : warp_bilinear(u₁, stopgrad ? Zygote.dropgrad(v̄) : v̄)
-			v, dual_var = πnet[w+1](u₀, ū₁, v̄, dual_var)
+			v, dual_var = πnet[j+1, w+1](u₀, ū₁, v̄, dual_var)
 			v̄ = v
 			if retflows
 				flows[j+1,w+1] = v
@@ -196,14 +217,20 @@ function Base.show(io::IO, n::BCANet)
 end
 
 function Base.show(io::IO, πn::PiBCANet)
-	print(io, "PiBCANet(W=", πn.W, ", shared=", πn.shared, ", K=", πn.K, ", M=", πn.M, ", P=", πn.P, ", s=", πn.s, ")")
-	nps = sum(length, params(πn.net[1]))
-	if !πn.shared
-		nps *= πn.W
+	print(io, "PiBCANet((J, W)=", size(πn.net) .- 1, ", shared_scale=", πn.shared_scale, ", shared_iter=", πn.shared_iter, ", K=", πn.K, ", M=", πn.M, ", P=", πn.P, ", s=", πn.s, ")")
+	nps = sum(length, params(πn.net[1,1]))
+	if !πn.shared_iter
+		nps *= πn.W+1
+	end
+	if !πn.shared_scale
+		nps *= πn.J+1
 	end
 	nps_unit = ""
-	if nps > 1000
-		nps = nps ÷ 1000
+	if nps > 1e6
+		nps = ceil(Int, nps/1e6)
+		nps_unit = "M"
+	elseif nps > 1e3
+		nps = ceil(Int, nps/1e3)
 		nps_unit = "k"
 	end
 	printstyled(io, "  # ", nps, nps_unit*" parameters"; color=:light_black)

@@ -2,6 +2,7 @@
 train.jl
 =#
 
+# average gradient norm
 function agradnorm(∇::Zygote.Grads)
 	agnorm = 0
 	i = 0
@@ -13,27 +14,56 @@ function agradnorm(∇::Zygote.Grads)
 	return agnorm / i
 end
 
-function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=4f0, β=10f0, opt=missing, desc="", verbose=true, clipnorm=Inf, stopgrad=true, device=identity)
+# total gradient norm (of vectorized params)
+function gradnorm(∇::Zygote.Grads)
+	gnorm = 0
+	for g ∈ ∇
+		isnothing(g) && continue
+		gnorm += sum(abs2, vec(g))
+	end
+	return sqrt(gnorm)
+end
+
+function clip_total_gradnorm!(∇::Zygote.Grads, thresh)
+	gnorm = gradnorm(∇)
+	if gnorm > thresh
+		for g ∈ ∇
+			isnothing(g) && continue
+			g .*= thresh/gnorm
+		end
+	end
+	return gnorm
+end
+
+function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=4f0, β=10f0, opt=missing, desc="", verbose=true, clipnorm=Inf, clipvalue=Inf, stopgrad=true, device=identity, use_mask=true)
+	clipnorm  = (clipnorm == false)  ? Inf : clipnorm
+	clipvalue = (clipvalue == false) ? Inf : clipvalue
+
 	training && @assert(!ismissing(opt),"Optimizer is required if training.") 
-	if training && !isa(clipnorm, Bool) && clipnorm < Inf
-		opt = Optimiser(ClipNorm(Float32(clipnorm)), opt)
+	if training && clipvalue < Inf
+		opt = Optimiser(ClipValue(Float32(clipvalue)), opt)
 	end
 	P = meter.Progress(length(data), desc=desc, showspeed=true)
 
 	# -- initialize --
 	ρ⃗ = zeros(length(data));  # loss history
 	Θ = params(net)
-	norm∇L = 0
+	total_gnorm = 0
 
-	if weight_decay > 0
+	if weight_decay == 0
 		penalty = ()->0
 	else
 		penalty = ()-> begin 
 			local loss
 			loss = 0
-			for w ∈ 0:net.W, k ∈ 1:net.K
-				loss += sum(abs2, net[w+1].A[k].weight) + sum(abs2, net[w+1].Bᵀ[k].weight)
-				net.shared && k==K && break
+			for j ∈ 0:net.J
+				for w ∈ 0:net.W
+					for k ∈ 1:net.K
+						loss += sum(abs2, net[j+1,w+1].A[k].weight) + sum(abs2, net[j+1,w+1].Bᵀ[k].weight)
+					end
+					net.shared_iter && break
+				end
+				net.shared_scale && break
 			end
 			return loss
 		end
@@ -42,20 +72,20 @@ function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=
 	for (i,F) ∈ enumerate(data)
 		local wdpen
 		J = length(F.flows)-1
+		masks = use_mask ? F.masks : missing
 		if training
 			∇L = gradient(Θ) do
-			#ρ, pullback = Zygote.pullback(Θ) do
 				flows = net(F.frame0, F.frame1, J; stopgrad=stopgrad, retflows=true)
 				wdpen = penalty()
-				ρ     = PiLoss(L1Loss, α, β, flows, F.flows, F.masks) + weight_decay*wdpen
+				ρ     = PiLoss(L1Loss, α, β, flows, F.flows, masks) + weight_decay*wdpen 
 			end
-			#∇L = pullback(1f0)
-			norm∇L = verbose ? agradnorm(∇L) : 0
+			clip_total_gradnorm!(∇L, clipnorm)
+			total_gnorm = verbose ? gradnorm(∇L) : 0
 			update!(opt, Θ, ∇L)
 			Π!(net)
 		else 
-			flow = net(F.frame0, F.frame1, J; retflows=false)
-			ρ = EPELoss(flow, F.flows[1], ones(size(F.masks[1])) |> device)
+			flow = net(F.frame0, F.frame1, 5; retflows=false)
+			ρ = EPELoss(flow, F.flows[1], use_mask ? masks[1] : 1)
 		end
 		if isnan(ρ) || ρ > 1e3
 			@warn "passthrough!: NaN or large (>100) loss encountered"
@@ -64,7 +94,7 @@ function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=
 		ρ⃗[i] = ρ
 		if verbose
 			values = [(:loss, @sprintf("%.3e",ρ)), (:avgloss, @sprintf("%.3e",mean(ρ⃗[1:i])))]
-			training && push!(values, (:avg_norm∇L, @sprintf("%.3e",norm∇L)))
+			training && push!(values, (:total_gnorm, @sprintf("%.3e",total_gnorm)))
 			training && push!(values, (:weight_decay, @sprintf("%.3e", wdpen)))
 			push!(values, (:test, @sprintf("This should be changing if weights are updating... %.3e",sum(net[1].A[end].weight))))
 		end
@@ -78,7 +108,8 @@ function PiLoss(Loss::Function, α::T, β::T, flows, flows_gt, masks) where {T <
 	J, W = size(flows) .- 1
 	loss = 0
 	for j=0:J, w=0:W
-		loss = loss + α^(-j)*β^(-W+w)*Loss(flows[j+1,w+1], flows_gt[j+1], masks[j+1])
+		M = ismissing(masks) ? 1 : masks[j+1]
+		loss = loss + α^(-j)*β^(-W+w)*Loss(flows[j+1,w+1], flows_gt[j+1], M)
 	end
 	return loss
 end
@@ -90,8 +121,7 @@ L1Loss(x,y,M)  = mean(abs, M.*(x-y))
 #L1Loss(v′,v,M)  = mean(abs, v′ - v )
 
 function train!(net, loaders, opt; epochs=1, Δval=5, start=1, savedir="./", verbose=true, δ=0.5, γ=0.99, Δsched=1, device=identity, kws...)
-	@assert δ < 1 "Backtracking multiplier δ=$δ≮1"
-
+	@assert δ > 1 "Backtracking multiplier δ=$δ must be greater than 1."
 	# best loss
 	ρᵇ = Dict(:trn=>Inf, :val=>Inf) 
 
@@ -120,7 +150,7 @@ function train!(net, loaders, opt; epochs=1, Δval=5, start=1, savedir="./", ver
 			ρ̄ = any(isnan.(ρ⃗)) ? NaN : mean(ρ⃗)
 
 			# -- backtracking --
-			if isnan(ρ̄) || (phase==:val && δ*ρ̄ > ρᵇ[:val])
+			if isnan(ρ̄) || (phase==:val && ρ̄ > δ*ρᵇ[:val])
 				fn = joinpath(savedir,"net.bson")
 				if isfile(fn)
 					ckpt = load(fn)
@@ -171,7 +201,7 @@ function train!(net, loaders, opt; epochs=1, Δval=5, start=1, savedir="./", ver
 
 	# -- test --
 	if :tst ∈ keys(loaders)
-		ρ⃗ = passthrough!(net, loaders[:tst]; desc="TST:", verbose=verbose, kws...)
+		ρ⃗ = passthrough!(net, loaders[:tst]; desc="TST:", verbose=verbose, device=device, kws...)
 		ρ̄ = mean(ρ⃗)
 		log(joinpath(savedir, "tst.csv"), @sprintf("%s, %.3f\n", loaders[:tst].dataset.name, ρ̄))
 	end

@@ -102,15 +102,20 @@ end
 
 abstract type AbstractDataset end
 
-struct MPISintelDataset <: AbstractDataset
+mutable struct MPISintelDataset <: AbstractDataset
 	name::String
 	root::String
 	data::FlowData
 	findex::Vector{Tuple{Int,Int}}
+	gray::Bool
 end
 
-function MPISintelDataset(root::String; split="trn", gray=false)
-	d = joinpath(root, "training", split*".txt") |> readdlm 
+function MPISintelDataset(root::String; split="trn", type="clean", gray=false)
+	if split == "all"
+		d = readdir(joinpath(root, "training/clean"))
+	else
+		d = joinpath(root, "training", split*".txt") |> readdlm 
+	end
 	f(x) = gray ? begin
 		x = load(x)
 		x = eltype(x) <: RGB ? Gray.(x) : x
@@ -122,12 +127,12 @@ function MPISintelDataset(root::String; split="trn", gray=false)
 		P = meter.Progress(N, desc=uppercase(split)*"-"*dir*" ")
 		[ntuple(i-> begin meter.next!(P); f(vecfn[i]); end, length(vecfn)) for vecfn in listfn]
 	end
-	data = FlowData(loadset.(("clean","flow","occlusions","invalid"))...)
+	data = FlowData(loadset.((type,"flow","occlusions","invalid"))...)
 	findex = []
 	for i=1:length(data.flow), j=1:length(data.flow[i])
 		push!(findex, (i,j))
 	end
-	return MPISintelDataset("MPI-Sintel-"*split, root, data, findex)
+	return MPISintelDataset("MPI-Sintel-"*split, root, data, findex, gray)
 end
 
 Base.length(ds::MPISintelDataset) = length(ds.findex)
