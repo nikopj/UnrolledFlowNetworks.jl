@@ -57,20 +57,21 @@ function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; γ=0, β=1, maxit=100,
 	η = τ.*α
 
 	# image driven regularization
-	α₀ = mapslices(norm, ∇u₀, dims=3)
-	E = exp.(-γ.*(α₀.^β))
-	λ = λ.*(E .+ 1e-3)
+	α₀ = sqrt.(sum(abs2, ∇u₀, dims=3))
+	# E = T.(exp.(-γ.*(α₀.^β)) .+ 1f-3)
+	E = T.(1 .- sigmoid.(γ.*(α₀ .- β)))
+
 
 	k = 0
 	while k == 0 || k < maxit && residual[k] > tol
 		# proximal gradient ascent on dual
-		y = w + σ*D(2v - vᵏ)
+		y = w + σ.*E.*D(2v - vᵏ)
 		w = y ./ max.(1, sqrt.(sum(abs2, y, dims=3))./λ) 
 		#w = min.(λ, max.(-λ, y))
 
 		vᵏ = v
 		# proximal gradient descent on primal
-		x = v - τ*Dᵀ(w)
+		x = v - τ*Dᵀ(E.*w)
 		r = sum(∇u₁.*x, dims=3) + b
 		#v = x + ∇u₁.*(ST(r, η) - r)./(α  .+ 1f-7)
 		mask = abs.(r) .≤ η
@@ -135,10 +136,10 @@ function TVL1_VCA(u₀, u₁, λ, v̄=missing, dual_vars=missing; γ=0, β=1, ma
 	residual = zeros(maxit)  
 
 	# image driven regularization
-	∇u₀ = permutedims(u₁, (1,2,4,3)) |> x->conv(x, W; pad=1) # (M,N,2,C)
-	α₀ = mapslices(norm, ∇u₀, dims=(3,4))
-	E = exp.(-γ.*(α₀.^β))
-	λ = λ.*(E .+ 1e-3)
+	∇u₀ = permutedims(u₀, (1,2,4,3)) |> x->conv(x, W; pad=1) # (M,N,2,C)
+	α₀ = sqrt.(sum(abs2, ∇u₀, dims=(3,4)))
+	# E = T.(exp.(-γ.*(α₀.^β)) .+ 1f-3)
+	E = T.(1 .- sigmoid.(γ.*(α₀ .- β)))
 
 	# ADMM init
 	∇u = permutedims(u₁, (1,2,4,3)) |> x->conv(x, W; pad=1) # (M,N,2,C)
@@ -168,13 +169,13 @@ function TVL1_VCA(u₀, u₁, λ, v̄=missing, dual_vars=missing; γ=0, β=1, ma
 	k = 0
 	while k == 0 || k < maxit && residual[k] > tol
 		# proximal gradient ascent on dual
-		y = w + σ*D(2v - vᵏ)
-		w = y ./ max.(1, sqrt.(sum(abs2, y, dims=3))./λ) 
+		y = w + σ.*E.*D(2v - vᵏ)
+		w = y ./ max.(1f0, sqrt.(sum(abs2, y, dims=3))./λ) 
 		# w = min.(λ, max.(-λ, y))
 
 		vᵏ = v
 		# proximal gradient descent on primal
-		x = v - τ*Dᵀ(w)
+		x = v - τ*Dᵀ(E.*w)
 		# ADMM primal variable update
 		# v = R(x - ρAᵀ(b - t + s))
 		bts = b - t + s

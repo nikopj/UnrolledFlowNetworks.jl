@@ -2,7 +2,7 @@ module UnrolledFlowNetworks
 
 using Interpolations, OMEinsum, FFTW
 using Flux, NNlib, NNlibCUDA, Statistics, CUDA, LinearAlgebra, Zygote
-using Flux.Optimise: Optimiser, ClipNorm, ADAM, update!
+using Flux.Optimise: Optimiser, ClipValue, ADAM, update!
 using LazyGrids
 using Images, Printf, FileIO
 using CSV, CSVFiles, BSON, DataFrames

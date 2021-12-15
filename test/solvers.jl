@@ -32,7 +32,7 @@ vgt= tensorload(T , "dataset/MPI_Sintel/training/flow/shaman_2/frame_0048.flo") 
 
 λ = 2e-1
 J = 5
-kws = Dict(:γ=>0.3, :β=>1, :maxit=>40, :maxwarp=>5, :tol=>1e-3, :tolwarp=>1e-3)
+kws = Dict(:γ=>100, :β=>0.5, :maxit=>100, :maxwarp=>5, :tol=>1e-3, :tolwarp=>1e-3)
 
 #v, res = ufn.TVL1_VCA(u₀,u₁,λ; maxit=10, tol=1e-3, verbose=true)
 

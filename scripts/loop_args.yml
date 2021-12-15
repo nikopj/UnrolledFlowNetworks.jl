@@ -1,8 +1,7 @@
 loop: 
-  shared: [false, true]
-  η: [1e-1, 1e-3, 1e-5]
-  λ₀: [1e-1, 1e-3] 
-name: "PiBCANet-shared_lr_t0_W=5"
+  η: [1e-4, 1e-5]
+  weight_decay: [1e-4, 1e-5, 1e-6, 0] 
+name: "PiBCANet-lr_decay3"
 version0: 1
 args:
   opt:
@@ -10,30 +9,34 @@ args:
   train:
     savedir: 
     γ: 0.95
-    clipnorm: 1e-2
+    clipnorm: false
+    clipvalue: 1.0
     stopgrad: true
     verbose: false
-    β: 5
+    β: 1.25
     α: 3
     Δval: 5
-    epochs: 2000
-    Δsched: 10
-    δ: 0.5
+    epochs: 400
+    Δsched: 5
+    δ: 1.05
+    weight_decay: 1e-4
   ckpt: 
   net:
     W: 5          # Warps per scale
-    shared: true  # BCANet sharing
+    shared_iter: false 
+    shared_scale: false
+    J: 5
     K: 10         # itrs per module
     M: 16         # num filters
     P: 5          # filter side length
     s: 1          # stride
-    λ₀: 1e-1      # initial threshold
+    λ₀: 1e-3      # initial threshold
   data:
     params:
       σ: 1e-2
       batch_size: 4
-      J: 3
-      crop_size: 256
+      J: 5
+      crop_size: 368
       scale: 0
     root: "dataset/MPI_Sintel/"
     gray: true
