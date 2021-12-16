@@ -196,7 +196,7 @@ function TVL1_VCA(u₀, u₁, λ, v̄=missing, dual_vars=missing; γ=0, β=1, ma
 	return v, (t,s,w), residual[1:k]
 end
 
-function flow_ictf(u₀, u₁, λ, J; maxwarp=0, verbose=true, tolwarp=1e-4, kws...) 
+function flow_ictf(u₀, u₁, λ, J; retflows=false, maxwarp=0, verbose=true, tolwarp=1e-4, kws...) 
 	TVL1 = size(u₀,3)==1 ? TVL1_BCA : TVL1_VCA
 
 	device = (u₀ isa CuArray && CUDA.functional()) ? gpu : cpu
@@ -206,6 +206,10 @@ function flow_ictf(u₀, u₁, λ, J; maxwarp=0, verbose=true, tolwarp=1e-4, kws
 	pyramid = [(u₀,u₁)]
 	for j∈1:J
 		push!(pyramid, H.(pyramid[j]))
+	end
+
+	if retflows
+		flows = []
 	end
 
 	v̄, dual_var = missing, missing
@@ -226,6 +230,9 @@ function flow_ictf(u₀, u₁, λ, J; maxwarp=0, verbose=true, tolwarp=1e-4, kws
 			w += 1
 			v̄ = v
 		end
+		if retflows
+			pushfirst!(flows, v)
+		end
 
 		# upscale flow and dual variables to finer scale
 		if j>0 
@@ -236,6 +243,9 @@ function flow_ictf(u₀, u₁, λ, J; maxwarp=0, verbose=true, tolwarp=1e-4, kws
 			end
 			v̄ = 2*upsample_bilinear(v̄, (2,2)) 
 		end
+	end
+	if retflows
+		return flows
 	end
 	return v̄
 end

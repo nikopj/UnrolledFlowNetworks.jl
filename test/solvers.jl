@@ -11,7 +11,7 @@ root = "dataset/MPI_Sintel/training/clean/shaman_2/"
 device = CUDA.functional() ? begin @info "Using GPU."; gpu end : cpu
 # device = cpu
 
-gray = false
+gray = true
 T = CUDA.functional() ? Float32 : Float64
 # T = Float64
 
@@ -32,7 +32,7 @@ vgt= tensorload(T , "dataset/MPI_Sintel/training/flow/shaman_2/frame_0048.flo") 
 
 λ = 2e-1
 J = 5
-kws = Dict(:γ=>100, :β=>0.5, :maxit=>100, :maxwarp=>5, :tol=>1e-3, :tolwarp=>1e-3)
+kws = Dict(:retflows=>true, :γ=>100, :β=>0.5, :maxit=>100, :maxwarp=>5, :tol=>1e-3, :tolwarp=>1e-3)
 
 #v, res = ufn.TVL1_VCA(u₀,u₁,λ; maxit=10, tol=1e-3, verbose=true)
 
@@ -40,8 +40,8 @@ u₀ᵖ, u₁ᵖ, params = ufn.preprocess(u₀, u₁, 2^J)
 @show size(u₀ᵖ)
 @show typeof(u₀ᵖ)
 
-v = flow_ictf(u₀ᵖ, u₁ᵖ, λ, J; kws...)
-v = ufn.unpad(v, params[2]) 
+flows = flow_ictf(u₀ᵖ, u₁ᵖ, λ, J; kws...)
+v = ufn.unpad(flows[1], params[2]) 
 
 loss = ufn.EPELoss(v, vgt, device(ones(eltype(vgt), size(vgt))))
 @printf "Loss = %.3f\n" loss
