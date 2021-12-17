@@ -17,7 +17,11 @@ function tensor2img(A::Array{<:Real,4})
 	if size(A)[3] == 1
 		return cat([tensor2img(A[:,:,1,i]) for i ∈ 1:size(A,4)]..., dims=3)
 	end
-	return cat([tensor2img(RGB, permutedims(A[:,:,:,i], (3,1,2))) for i ∈ 1:size(A,4)]..., dims=3)
+	out = cat([tensor2img(RGB, permutedims(A[:,:,:,i], (3,1,2))) for i ∈ 1:size(A,4)]..., dims=3)
+	if size(out, 3) == 1
+		return out[:,:,1]
+	end
+	return out
 end
 
 function tensor2img(ctype, A::Array{<:Real}) 
@@ -36,11 +40,6 @@ function img2tensor(T::Type, img)
 end
 img2tensor(A) = img2tensor(Float32, A)
 
-function flo2tensor(T::Type, flo)
-	return permutedims(convert(Array{T,3},flo), (2,3,1)) |> Flux.unsqueeze(4)
-end
-flo2tensor(A) = flo2tensor(Float32, A)
-
 function tensorload(T::Type, path::String; gray::Bool=false)
 	A = load(path)
 	# load optical flow
@@ -51,6 +50,25 @@ function tensorload(T::Type, path::String; gray::Bool=false)
 	return img2tensor(T, gray ? Gray.(A) : A)
 end
 tensorload(path::String; gray::Bool=false) = tensorload(Float32, path; gray=gray)
+
+function flo2tensor(T::Type, flo)
+	return permutedims(convert(Array{T,3},flo), (2,3,1)) |> Flux.unsqueeze(4)
+end
+flo2tensor(A) = flo2tensor(Float32, A)
+
+function colorflow(flow::Array{T,4}; maxflow=maximum(mapslices(norm, flow, dims=3))) where {T}
+	CT = HSV{Float32}
+	color(x1, x2) = ismissing(x1) || ismissing(x2) ?
+		CT(0, 1, 0) :
+		CT(180f0/π * atan(x1, x2), norm((x1, x2)) / maxflow, 1)
+	x1 = selectdim(flow, 3, 1)
+	x2 = selectdim(flow, 3, 2)
+	out = color.(x1, x2)
+	if size(out, 3) == 1
+		return out[:,:,1]
+	end
+	return out
+end
 
 #==============================================================================
                                  FLOWDATA/SAMPLE
@@ -99,8 +117,66 @@ end
 #==============================================================================
                                  DATASET
 ==============================================================================#
-
 abstract type AbstractDataset end
+
+Base.getindex(ds::AbstractDataset, i::AbstractVector{Int}) = i .|> x-> ds[x]
+
+function Base.show(io::IO, ds::AbstractDataset)
+	print(io, "Dataset(name=\"",ds.name,"\", length=",length(ds))
+	print(io, ", eltype=",typeof(ds[1]),")")
+end
+
+#==============================================================================
+                           FlyingChairs DATASET
+==============================================================================#
+
+mutable struct FlyingChairsDataset <: AbstractDataset
+	name::String
+	root::String
+	data::Vector
+	gray::Bool
+end
+
+function FlyingChairsDataset(root::String; split="trn", gray=false)
+	# get filenames of flows
+	vecfn = filter(x->occursin(".flo", x), readdir("dataset/FlyingChairs/data/"))
+	# get numbers within filenames
+	vecindex = map(x->parse(Int, SubString(x, 1:5)), vecfn)
+
+	# get training or val subset
+	if split ∈ ("trn", "val")
+		trn_val = readdlm(joinpath(root, "train_val.txt"), Int)[:,1] .== (split=="trn" ? 1 : 2)
+		vecindex = vecindex[trn_val]
+	end
+
+	# function to get filenames for "img1", "img2", or "flow"
+	getfilenames(name) = begin
+		ext = name == "flow" ? ".flo" : ".ppm"
+		files = map(x->joinpath(root, @sprintf("data/%05d_", x)*name*ext), vecindex)
+	end
+	files = getfilenames.(("img1", "img2", "flow"))
+
+	# data as vector of named tuples of file names
+	data = [(frame0=files[1][i], frame1=files[2][i], flow=files[3][i]) for i ∈ 1:length(files[3])]
+
+	return FlyingChairsDataset("FlyingChairs-"*split, root, data, gray)
+end
+
+Base.length(ds::FlyingChairsDataset) = length(ds.data)
+function Base.getindex(ds::FlyingChairsDataset, i::Int)
+	d = ds.data[i]
+	F = FlowSample(tensorload(d.frame0, gray=ds.gray), 
+	               tensorload(d.frame1, gray=ds.gray), 
+	               tensorload(d.flow),
+	               missing)
+	F.masks = ones(eltype(F.flows), size(F.frame0)[1:2]..., 1, 1)
+	return F
+end
+
+#==============================================================================
+                            MPI-Sintel DATASET
+==============================================================================#
+
 
 mutable struct MPISintelDataset <: AbstractDataset
 	name::String
@@ -144,28 +220,11 @@ function Base.getindex(ds::MPISintelDataset, i::Int)
 	           flo2tensor(fD.flow[p][q]),
 	           Float32.((1f0 .- fD.invalid[p][q]).*(1f0 .- fD.occlusion[p][q])))
 end
-Base.getindex(ds::MPISintelDataset, i::AbstractVector{Int}) = i .|> x-> ds[x]
-
-function Base.show(io::IO, ds::MPISintelDataset)
-	print(io, "MPISintelDataset(name=\"",ds.name,"\", length=",length(ds))
-	print(io, ", eltype=",typeof(ds[1]),")")
-end
 
 #==============================================================================
                                  DATALOADER
 ==============================================================================#
 
-function getMPISintelLoaders(root::String; gray=false, batch_size=10, crop_size=128, σ=1, scale=0, J=0, device=identity)
-	@warn "NOT LOADING TRAINSET. UPDATE BEFORE SUBMITTING JOBS"
-	ds_trn = MPISintelDataset(root; split="trn", gray=gray)
-	ds_val = MPISintelDataset(root; split="val", gray=gray)
-	dl_trn = Dataloader(ds_val, true; batch_size=batch_size, crop_size=crop_size, scale=scale, J=J, σ=σ, device=device)
-	dl_val = Dataloader(ds_val, false; batch_size=1, scale=scale, J=J, σ=0, device=device)
-	return (trn=dl_trn, val=dl_val, tst=dl_val)
-end
-
-""" Dataloader
-"""
 mutable struct Dataloader
 	dataset::AbstractDataset
 	transform::Function        
@@ -173,12 +232,7 @@ mutable struct Dataloader
 	minibatches::AbstractVector # shuffled vector of mini-batch indices in dataset
 end
 
-function Dataloader(ds::AbstractDataset, transform::Function, bs::Int)
-	dl = Dataloader(ds, transform, bs, 1:length(ds))
-	shuffle!(dl)
-end
-
-function Dataloader(ds::MPISintelDataset, training::Bool; batch_size::Int=1, crop_size::Int=128, scale=0, J=0, σ::Union{<:Real,Tuple,Vector}=0, device=identity)
+function Dataloader(ds::AbstractDataset, training::Bool; batch_size::Int=1, crop_size::Int=128, scale=0, J=0, σ::Union{<:Real,Tuple,Vector}=0, device=identity)
 	σ′ = Float32.((scale+1) .* σ./255)
 	faugment(F) = training ? augment(F, crop_size) : F
 	blur_ops = (ConvGaussian(1; groups=size(ds[1].frame0,3), stride=2, device=device),
@@ -186,6 +240,11 @@ function Dataloader(ds::MPISintelDataset, training::Bool; batch_size::Int=1, cro
 		ConvGaussian(1; groups=1, stride=2, device=device))
 	xfrm(Fb) = transform(faugment, Fb, σ′, scale, J, blur_ops; device=device)
 	dl = Dataloader(ds, xfrm, batch_size, 1:length(ds))
+	shuffle!(dl)
+end
+
+function Dataloader(ds::AbstractDataset, transform::Function, bs::Int)
+	dl = Dataloader(ds, transform, bs, 1:length(ds))
 	shuffle!(dl)
 end
 
@@ -283,12 +342,12 @@ function crop(x::AbstractArray, cs::Int, ij::Tuple{Int,Int})
 end
 function randcrop(x::AbstractArray, cs::Int)
 	M, N = size(x)[1:2]
-	i, j = rand(1:M-cs), rand(1:N-cs)
+	i, j = rand(1:M-cs+1), rand(1:N-cs+1)
 	crop(x, cs, (i,j))
 end
 function randcrop(F::FlowSample, cs::Int)
 	M, N = size(F)[1:2]
-	i, j = rand(1:M-cs), rand(1:N-cs)
+	i, j = rand(1:M-cs+1), rand(1:N-cs+1)
 	C(x) = crop(x, cs, (i,j))
 	FlowSample(C.((F.frame0, F.frame1, F.flows, F.masks))...)
 end

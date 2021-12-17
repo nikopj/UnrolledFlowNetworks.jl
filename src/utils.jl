@@ -174,24 +174,6 @@ function warp_bilinear(img, flow)
 end
 
 #=============================================================================
-                             Flow
-=============================================================================#
-
-function colorflow(flow::Array{T,4}; maxflow=maximum(mapslices(norm, flow, dims=3))) where {T}
-	CT = HSV{Float32}
-	color(x1, x2) = ismissing(x1) || ismissing(x2) ?
-		CT(0, 1, 0) :
-		CT(180f0/π * atan(x1, x2), norm((x1, x2)) / maxflow, 1)
-	x1 = selectdim(flow, 3, 1)
-	x2 = selectdim(flow, 3, 2)
-	out = color.(x1, x2)
-	if size(out, 3) == 1
-		return out[:,:,1]
-	end
-	return out
-end
-
-#=============================================================================
                              MISC
 =============================================================================#
 

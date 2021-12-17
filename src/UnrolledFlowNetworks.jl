@@ -14,13 +14,13 @@ using Random: shuffle
 using DelimitedFiles
 
 include("utils.jl")
-export loadargs, saveargs, warp_bilinear, ConvGaussian, ConvSobel, colorflow, setrecursive!
+export loadargs, saveargs, warp_bilinear, ConvGaussian, ConvSobel, setrecursive!
 
 include("solvers.jl")
 export flow_ictf
 
 include("data.jl")
-export tensorload, tensor2img, img2tensor, getMPISintelLoaders, MPISintelDataset, Dataloader
+export tensorload, tensor2img, img2tensor, colorflow, FlyingChairsDataset, MPISintelDataset, Dataloader
 
 include("networks.jl")
 export BCANet, PiBCANet
