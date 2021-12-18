@@ -119,7 +119,7 @@ end
 ==============================================================================#
 abstract type AbstractDataset end
 
-Base.getindex(ds::AbstractDataset, i::AbstractVector{Int}) = i .|> x-> ds[x]
+Base.getindex(ds::AbstractDataset, i::AbstractVector{Int}) = map(x->ds[x], i)
 
 function Base.show(io::IO, ds::AbstractDataset)
 	print(io, "Dataset(name=\"",ds.name,"\", length=",length(ds))

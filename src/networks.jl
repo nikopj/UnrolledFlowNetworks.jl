@@ -104,11 +104,11 @@ end
 #=============================================================================
                              Forward Method 
 =============================================================================#
+ST(x,τ) = sign(x)*max(0, abs(x)-τ);   # soft-thresholding
 
-function shifted_ST1(x, A, b, α, τ) 
+function shifted_ST1(x::T, A::T, b::T, α::T, τ::T) where T <: AbstractArray
 	r = sum(A.*x, dims=3) + b
-	v = x + A.*(ST(r, τ.*α) - r)./(α .+ 1f-7)
-	return v
+	return @. x + A*(ST(r, τ*α) - r)/(α + 1f-7)
 end
 
 function shifted_ST2(x, A, b, α, τ)
@@ -118,17 +118,27 @@ function shifted_ST2(x, A, b, α, τ)
 	return v
 end
 
+function shifted_ST3(x, A, b, α, τ)
+	r = sum(A.*x, dims=3) + b
+	mask = Zygote.dropgrad(@. (abs(r) ≤ τ*α) )
+	v = @. x - A*(mask*r/(α + 1f-7) + (1 - mask)*τ*sign(r))
+	return v
+end
+
 # Unrolled TVL1-BCA 
-function (net::BCANet)(u₀, u₁, v̄, w)
+function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
 	∇u = net.∇(u₁)
 	b  = u₁ - u₀ - sum(∇u.*v̄, dims=3)
 	α  = sum(abs2, ∇u, dims=3)
 	v  = v̄
 	for k ∈ 1:net.K
 		# dual update
-		w = min.(net.λ[k], max.(-net.λ[k], w + net.A[k](v)))
+		w += net.A[k](v)
+		w -= ST.(w, net.λ[k])
 		# primal update
-		v = shifted_ST2(v - net.τ[k].*net.Bᵀ[k](w), ∇u, b, α, net.τ[k])
+		v -= net.τ[k].*net.Bᵀ[k](w)
+		r = sum(∇u.*v, dims=3) + b
+		v += ∇u.*(ST.(r, net.τ[k].*α) - r)./(α .+ 1f-7)
 	end
 	return v, w
 end
