@@ -55,10 +55,10 @@ function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=rand
 	Bᵀ= ntuple(i->ConvTranspose(copy(W₀), false; pad=pad, stride=s), K)
 	if init
 		L, _, flag = powermethod(x->Bᵀ[1](A[1](x)), randn(Float32,128,128,2,1), maxit=500, tol=1e-2, verbose=false)
-		if L < 0
-			println("ERROR: BCANet: powermethod: L<0. Something is very very wrong...")
-		end
 		@show L, flag
+		if L < 0
+			@error "ERROR: BCANet: powermethod: L<0. Something is very very wrong..."
+		end
 		for k ∈ 1:K
 			A[k].weight  ./= sqrt(L)
 			Bᵀ[k].weight ./= sqrt(L)
@@ -71,13 +71,15 @@ function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=rand
 end
 
 function PiBCANet(; J=0, W=0, shared_iter::Bool=true, shared_scale::Bool=true, init=true, kws...)
-	# initialize dictionaries with first order derivative stencil
+	# initialize dictionaries with first derivative stencil
 	P, M = kws[:P], kws[:M]
 	W₀ = zeros(Float32, P, P, 2, M)
 	c = (kws[:P] - 1) ÷ 2 + 1
-	W₀[c-1:c+1, c, 1, 1:M÷2] = repeat([-1; 0; 1], 1, 1, 1, M÷2)
-	W₀[c, c-1:c+1, 2, M÷2+1:end] = repeat([-1 0 1], 1, 1, 1, M÷2)
-	
+	W₀[c-1:c+1, c, 1, 1:2:M÷2] = repeat([-1; 0; 1], 1, 1, 1, M÷4)
+	W₀[c, c-1:c+1, 1, 2:2:M÷2] = repeat([-1 0 1], 1, 1, 1, M÷4)
+	W₀[c-1:c+1, c, 2, M÷2+2:2:end] = repeat([-1; 0; 1], 1, 1, 1, M÷4)
+	W₀[c, c-1:c+1, 2, M÷2+1:2:end] = repeat([-1 0 1], 1, 1, 1, M÷4)
+
 	net  = Matrix{BCANet}(undef, (J+1, W+1))
 	net[1,1] = BCANet(; kws..., W₀=copy(W₀), init=true)
 	W₀ = net[1,1].A[1].weight
@@ -126,14 +128,16 @@ function (net::BCANet)(u₀, u₁, v̄, w)
 	v  = v̄
 	for k ∈ 1:net.K
 		# dual update
-		w = min.(net.λ[k], max.(-net.λ[k], w + net.A[k](v)))
+		# w = min.(net.λ[k], max.(-net.λ[k], w + net.A[k](v)))
+		y = w + net.A[k](v)
+		w = y - ST(y, net.λ[k])
 		# primal update
 		v = shifted_ST2(v - net.τ[k].*net.Bᵀ[k](w), ∇u, b, α, net.τ[k])
 	end
 	return v, w
 end
 
-function (πnet::PiBCANet)(u₀, u₁, J::Int; stopgrad=false, retflows=false)
+function (πnet::PiBCANet)(u₀, u₁, J::Int; v̄=missing, stopgrad=false, retflows=false)
 	u₀, u₁, preparams = preprocess(u₀, u₁, 2^(J+πnet.s÷2))
 
 	# construct Gaussian pyramid
@@ -153,10 +157,14 @@ function (πnet::PiBCANet)(u₀, u₁, J::Int; stopgrad=false, retflows=false)
 	# init variables
 	# use similar to init with CuArrays of on CUDA
 	M, N, _, B = size(pyramid[end, 1])
-	v̄        = similar(u₀, eltype(u₀), (M, N, 2, B))
+	if ismissing(v̄)
+		v̄ = similar(u₀, eltype(u₀), (M, N, 2, B))
+		Zygote.ignore() do
+			fill!(v̄,0)
+		end
+	end
 	dual_var = similar(u₀, eltype(u₀), (M÷πnet.s, N÷πnet.s, πnet.M, B))
 	Zygote.ignore() do
-		fill!(v̄,0)
 		fill!(dual_var,0)
 	end
 	v = nothing

@@ -35,7 +35,7 @@ function clip_total_gradnorm!(∇::Zygote.Grads, thresh)
 	return gnorm
 end
 
-function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=4f0, β=10f0, opt=missing, desc="", verbose=true, clipnorm=Inf, clipvalue=Inf, stopgrad=true, device=identity, use_mask=true)
+function passthrough!(net, data::Dataloader, training=false; gt_init=false, weight_decay=0, α=4f0, β=10f0, opt=missing, desc="", verbose=true, clipnorm=Inf, clipvalue=Inf, stopgrad=true, device=identity, use_mask=true, maxiter=Inf)
 	clipnorm  = (clipnorm == false)  ? Inf : clipnorm
 	clipvalue = (clipvalue == false) ? Inf : clipvalue
 
@@ -43,7 +43,7 @@ function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=
 	if training && clipvalue < Inf
 		opt = Optimiser(ClipValue(Float32(clipvalue)), opt)
 	end
-	P = meter.Progress(length(data), desc=desc, showspeed=true)
+	P = meter.Progress(min(maxiter, length(data)), desc=desc, showspeed=true)
 
 	# -- initialize --
 	ρ⃗ = zeros(length(data));  # loss history
@@ -72,20 +72,19 @@ function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=
 	for (i,F) ∈ enumerate(data)
 		local wdpen
 		J = length(F.flows)-1
-		masks = use_mask ? F.masks : missing
 		if training
 			∇L = gradient(Θ) do
-				flows = net(F.frame0, F.frame1, J; stopgrad=stopgrad, retflows=true)
+				flows = net(F.frame0, F.frame1, J; v̄= gt_init ? F.flows[J+1] : missing, stopgrad=stopgrad, retflows=true)
 				wdpen = penalty()
-				ρ     = PiLoss(L1Loss, α, β, flows, F.flows, masks) + weight_decay*wdpen 
+				ρ     = PiLoss(L1Loss, α, β, flows, F.flows, use_mask ? F.masks : missing) + weight_decay*wdpen 
 			end
 			clip_total_gradnorm!(∇L, clipnorm)
 			total_gnorm = verbose ? gradnorm(∇L) : 0
 			update!(opt, Θ, ∇L)
 			Π!(net)
 		else 
-			flow = net(F.frame0, F.frame1, 5; retflows=false)
-			ρ = EPELoss(flow, F.flows[1], use_mask ? masks[1] : 1)
+			flow = net(F.frame0, F.frame1, J; v̄= gt_init ? F.flows[J+1] : missing, retflows=false)
+			ρ = EPELoss(flow, F.flows[1], use_mask ? F.masks[1] : 1)
 		end
 		if isnan(ρ) || ρ > 1e3
 			@warn "passthrough!: NaN or large (>100) loss encountered"
@@ -99,6 +98,10 @@ function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=
 			push!(values, (:test, @sprintf("This should be changing if weights are updating... %.3e",sum(net[1].A[end].weight))))
 		end
 		meter.next!(P; showvalues = verbose ? values : [])
+		if i ≥ maxiter
+			shuffle!(data)
+			break
+		end
 	end
 	return ρ⃗
 end

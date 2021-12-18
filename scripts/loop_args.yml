@@ -1,28 +1,31 @@
 loop: 
-  η: [1e-4, 1e-5]
-  weight_decay: [1e-4, 1e-5, 1e-6, 0] 
-name: "PiBCANet-lr_decay3"
+  η: [1e-3, 1e-4]
+  weight_decay: [1e-4, 1e-6, 0] 
+name: "PiBCANet-lr_decay_W=1_K=10"
 version0: 1
 args:
   opt:
-    η: 1e-2
+    η: 1e-3
   train:
     savedir: 
-    γ: 0.95
+    γ: 0.5
     clipnorm: false
     clipvalue: 1.0
     stopgrad: true
     verbose: false
     β: 1.25
-    α: 3
+    α: 1
     Δval: 5
-    epochs: 400
-    Δsched: 5
-    δ: 1.05
+    epochs: 200
+    Δsched: 25
+    δ: 1.1
     weight_decay: 1e-4
+    use_mask: false
+    gt_init: false
+    maxiter: 1000
   ckpt: 
   net:
-    W: 5          # Warps per scale
+    W: 1          # Warps per scale
     shared_iter: false 
     shared_scale: false
     J: 5
@@ -30,13 +33,14 @@ args:
     M: 16         # num filters
     P: 5          # filter side length
     s: 1          # stride
-    λ₀: 1e-3      # initial threshold
+    λ₀: 1e-2      # initial threshold
   data:
+    dataset: "FlyingChairs"
     params:
-      σ: 1e-2
-      batch_size: 4
+      σ: 5e-1
+      batch_size: 6
       J: 5
-      crop_size: 368
+      crop_size: 256
       scale: 0
-    root: "dataset/MPI_Sintel/"
+    root: "dataset/FlyingChairs/"
     gray: true
