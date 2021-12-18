@@ -202,7 +202,7 @@ function flow_ictf(u₀, u₁, λ, J; retflows=false, maxwarp=0, verbose=true, t
 	device = (u₀ isa CuArray && CUDA.functional()) ? gpu : cpu
 
 	# construct Gaussian pyramid
-	H = ConvGaussian(eltype(u₀), 1; groups=size(u₀,3), stride=2) |> device
+	H = ConvGaussian(eltype(u₀); groups=size(u₀,3), stride=2) |> device
 	pyramid = [(u₀,u₁)]
 	for j∈1:J
 		push!(pyramid, H.(pyramid[j]))

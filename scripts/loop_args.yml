@@ -25,6 +25,7 @@ args:
     maxiter: 1000
   ckpt: 
   net:
+    classical_init: false
     W: 1          # Warps per scale
     shared_iter: false 
     shared_scale: false

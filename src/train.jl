@@ -98,7 +98,7 @@ function passthrough!(net, data::Dataloader, training=false; gt_init=false, weig
 			push!(values, (:test, @sprintf("This should be changing if weights are updating... %.3e",sum(net[1].A[end].weight))))
 		end
 		meter.next!(P; showvalues = verbose ? values : [])
-		if i ≥ maxiter
+		if !training && i ≥ maxiter
 			shuffle!(data)
 			break
 		end

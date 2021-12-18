@@ -48,12 +48,21 @@ Base.getindex(πn::PiBCANet, k...) = πn.net[k...]
                               Constructors 
 =============================================================================#
 
-function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=randn(Float32,P,P,2,M), init=true)
+function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=randn(Float32,P,P,2,M), classical_init=false, lipschitz_init=true)
+	if classical_init
+		# Initialize with centeral difference kernels
+		c = (P - 1) ÷ 2 + 1
+		W₀ = zeros(Float32, size(W₀))
+		W₀[c-1:c+1, c, 1, 1:2:M÷2] = repeat([-1; 0; 1], 1, 1, 1, M÷4)
+		W₀[c, c-1:c+1, 1, 2:2:M÷2] = repeat([-1 0 1], 1, 1, 1, M÷4)
+		W₀[c-1:c+1, c, 2, M÷2+2:2:end] = repeat([-1; 0; 1], 1, 1, 1, M÷4)
+		W₀[c, c-1:c+1, 2, M÷2+1:2:end] = repeat([-1 0 1], 1, 1, 1, M÷4)
+	end
 	padl, padr = ceil(Int,(P-s)/2), floor(Int,(P-s)/2)
 	pad = (padl, padr, padl, padr)
 	A = ntuple(i->Conv(copy(W₀), false; pad=pad, stride=s), K)
 	Bᵀ= ntuple(i->ConvTranspose(copy(W₀), false; pad=pad, stride=s), K)
-	if init
+	if lipschitz_init
 		L, _, flag = powermethod(x->Bᵀ[1](A[1](x)), randn(Float32,128,128,2,1), maxit=500, tol=1e-2, verbose=false)
 		@show L, flag
 		if L < 0
@@ -70,69 +79,49 @@ function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=rand
 	return BCANet(A, Bᵀ, τ, λ, K, M, P, s, ∇)
 end
 
-function PiBCANet(; J=0, W=0, shared_iter::Bool=true, shared_scale::Bool=true, init=true, kws...)
-	# initialize dictionaries with first derivative stencil
-	P, M = kws[:P], kws[:M]
-	W₀ = zeros(Float32, P, P, 2, M)
-	c = (kws[:P] - 1) ÷ 2 + 1
-	W₀[c-1:c+1, c, 1, 1:2:M÷2] = repeat([-1; 0; 1], 1, 1, 1, M÷4)
-	W₀[c, c-1:c+1, 1, 2:2:M÷2] = repeat([-1 0 1], 1, 1, 1, M÷4)
-	W₀[c-1:c+1, c, 2, M÷2+2:2:end] = repeat([-1; 0; 1], 1, 1, 1, M÷4)
-	W₀[c, c-1:c+1, 2, M÷2+1:2:end] = repeat([-1 0 1], 1, 1, 1, M÷4)
-
+function PiBCANet(; J=0, W=0, shared_iter::Bool=true, shared_scale::Bool=true, lipschitz_init=true, kws...)
 	net  = Matrix{BCANet}(undef, (J+1, W+1))
-	net[1,1] = BCANet(; kws..., W₀=copy(W₀), init=true)
+	net[1,1] = BCANet(; kws..., lipschitz_init=lipschitz_init)
 	W₀ = net[1,1].A[1].weight
 
 	if shared_iter && shared_scale
 		for j=0:J, w=0:W; net[j+1,w+1] = net[1,1]; end
 	elseif shared_iter && !shared_scale
 		for j=0:J
-			net[j+1,1] = BCANet(; kws..., W₀=copy(W₀), init=false)
+			net[j+1,1] = BCANet(; kws..., W₀=copy(W₀), lipschitz_init=false)
 			for w=1:W; net[j+1,w+1] = net[j+1,1]; end
 		end
 	elseif !shared_iter && shared_scale
 		@error "Not Implemented"
 	elseif !shared_iter && !shared_scale
 		for j=0:J, w=0:W
-			net[j+1,w+1] = BCANet(; kws..., W₀=copy(W₀), init=false)
+			net[j+1,w+1] = BCANet(; kws..., W₀=copy(W₀), lipschitz_init=false)
 		end
 	end
 
-	H = ConvGaussian(1; stride=2)
+	H = ConvGaussian(stride=2)
 	return PiBCANet(net, H)
 end
 
 #=============================================================================
                              Forward Method 
 =============================================================================#
-
-function shifted_ST1(x, A, b, α, τ) 
-	r = sum(A.*x, dims=3) + b
-	v = x + A.*(ST(r, τ.*α) - r)./(α .+ 1f-7)
-	return v
-end
-
-function shifted_ST2(x, A, b, α, τ)
-	r = sum(A.*x, dims=3) + b
-	mask = Zygote.dropgrad( abs.(r) .≤ τ.*α )
-	v = x - A.*(mask.*r./(α .+ 1f-7) + (1 .- mask).*τ.*sign.(r))
-	return v
-end
+ST(x,τ) = sign(x)*max(0, abs(x)-τ);   # soft-thresholding
 
 # Unrolled TVL1-BCA 
-function (net::BCANet)(u₀, u₁, v̄, w)
+function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
 	∇u = net.∇(u₁)
 	b  = u₁ - u₀ - sum(∇u.*v̄, dims=3)
 	α  = sum(abs2, ∇u, dims=3)
 	v  = v̄
 	for k ∈ 1:net.K
 		# dual update
-		# w = min.(net.λ[k], max.(-net.λ[k], w + net.A[k](v)))
-		y = w + net.A[k](v)
-		w = y - ST(y, net.λ[k])
+		w += net.A[k](v)
+		w -= ST.(w, net.λ[k])
 		# primal update
-		v = shifted_ST2(v - net.τ[k].*net.Bᵀ[k](w), ∇u, b, α, net.τ[k])
+		v -= net.τ[k].*net.Bᵀ[k](w)
+		r = sum(∇u.*v, dims=3) + b
+		v += ∇u.*(ST.(r, net.τ[k].*α) - r)./(α .+ 1f-7)
 	end
 	return v, w
 end

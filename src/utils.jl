@@ -2,11 +2,6 @@
 utils.jl
 =#
 
-ST(x,τ) = sign.(x).*max.(0, abs.(x).-τ);	   # soft-thresholding
-pixeldot(x,y) = sum(x.*y, dims=(3,4))		   # dot-product of 4D pixel vectors
-pixelnorm(x) = sqrt.(sum(abs2, x, dims=(3,4))) # 2-norm on 4D image-tensor pixel-vectors
-BT(x,τ) = max.(0, 1 .- τ./pixelnorm(x)).*x	   # Block-thresholding of 4D pixel vectors
-
 #=============================================================================
                      Preprocessing and Postprocessing
 =============================================================================#
@@ -24,11 +19,12 @@ function unpad(x::AbstractArray, pad::NTuple{4,Int})
 	@view x[begin+pad[1]:end-pad[2], begin+pad[3]:end-pad[4], :, :]
 end
 
-function preprocess(I₀::AbstractArray, I₁::AbstractArray, stride::Int)
-	pad = calcpad(size(I₀)[1:2], stride)
-	I₀ᵖ, I₁ᵖ = (I₀, I₁) .|> x->pad_reflect(x, pad, dims=(1,2))
-	μ = mean(I₀ᵖ.+I₁ᵖ, dims=(1,2))./2
-	return I₀ᵖ.-μ, I₁ᵖ.-μ, (μ, pad)
+function preprocess(x::AbstractArray, y::AbstractArray, stride::Int)
+	pad = calcpad(size(x)[1:2], stride)
+	x = pad_reflect(x, pad, dims=(1,2))
+	y = pad_reflect(y, pad, dims=(1,2))
+	μ = mean(x+y, dims=(1,2))./2
+	return x .- μ, y .- μ, (μ, pad)
 end
 
 function postprocess(xₚ::AbstractArray, params)
@@ -64,7 +60,7 @@ function gaussiankernel(T::Type, σ, m=ceil(Int,6σ-1))
 end
 gaussiankernel(σ, m=ceil(Int,6σ-1)) = gaussiankernel(Float32, σ, m)
 
-function ConvGaussian(T::Type, σ::Real; groups=1, stride=1, device=identity)
+function ConvGaussian(T::Type, σ::Real=0.8; groups=1, stride=1, device=identity)
 	P = ceil(Int, 6σ-1)
 	if stride==2 && P%2!=0
 		P += 1
@@ -137,6 +133,7 @@ function warp_nearest(img, flow)
 end
 
 function warp_bilinear(img, flow)
+	local index00, index01, index10, index11
 	M, N, C, B = size(img)
 	x, y, c, b = ndgrid(1:M, 1:N, 1:C, 1:B) .|> Zygote.dropgrad
 
@@ -150,7 +147,6 @@ function warp_bilinear(img, flow)
 	u1 = clamp.(ceil.(Int32,  u), Int32(1), Int32(M)) 
 	v1 = clamp.(ceil.(Int32,  v), Int32(1), Int32(N)) 
 
-	local index00, index01, index10, index11
 	Zygote.ignore() do
 		index00 = CartesianIndex{4}.(u0, v0, c, b)
 		index01 = CartesianIndex{4}.(u0, v1, c, b)

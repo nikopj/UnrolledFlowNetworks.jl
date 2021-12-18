@@ -2,12 +2,12 @@ opt:
   η: 1e-3
 train:
   α: 1
-  Δval: 2
+  Δval: 5
   Δsched: 5
   clipvalue: 1.0
   weight_decay: 0.0001
   verbose: true
-  δ: 1.2
+  δ: 1.5
   clipnorm: false
   β: 1.25
   savedir: "models/PiBCANet-test"
@@ -16,22 +16,23 @@ train:
   epochs: 10
   use_mask: false
   gt_init: false
-  maxiter: 10
+  maxiter: 50
 ckpt: 
 net:
+  classical_init: false
   shared_iter: false
   shared_scale: false
-  P: 3
-  M: 4
+  P: 5
+  M: 16
   s: 1
   W: 0
   J: 0
-  K: 3
+  K: 10
   λ₀: 1e-2
 data:
   dataset: "FlyingChairs"
   params:
-    σ: 1
+    σ: 5e-1
     batch_size: 1
     J: 0
     crop_size: 256

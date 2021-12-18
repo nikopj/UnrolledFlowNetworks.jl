@@ -15,7 +15,7 @@ mkpath(args[:train][:savedir])
 
 # instantiate network
 loadingckpt = args[:ckpt] ≠ nothing && isfile(args[:ckpt])
-net = PiBCANet(; args[:net]..., init=!loadingckpt) |> device
+net = PiBCANet(; args[:net]..., lipschitz_init=!loadingckpt) |> device
 @show net
 
 # instantiate optimizer
