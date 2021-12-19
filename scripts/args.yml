@@ -5,7 +5,7 @@ train:
   Δval: 5
   Δsched: 5
   clipvalue: 1.0
-  weight_decay: 0.0001
+  weight_decay: 0
   verbose: true
   δ: 1.5
   clipnorm: false
@@ -13,10 +13,11 @@ train:
   savedir: "models/PiBCANet-test"
   γ: 0.95
   stopgrad: true
-  epochs: 10
+  epochs: 30
   use_mask: false
   gt_init: false
   maxiter: 50
+  Loss: "EPE"
 ckpt: 
 net:
   classical_init: false
@@ -26,15 +27,15 @@ net:
   M: 16
   s: 1
   W: 0
-  J: 0
-  K: 10
+  J: 5
+  K: 20
   λ₀: 1e-2
 data:
   dataset: "FlyingChairs"
   params:
-    σ: 5e-1
-    batch_size: 1
-    J: 0
+    σ: [1e-3, 5e-1]
+    batch_size: 8
+    J: 5
     crop_size: 256
     scale: 0
   root: "dataset/FlyingChairs/"

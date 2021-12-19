@@ -48,15 +48,18 @@ Base.getindex(πn::PiBCANet, k...) = πn.net[k...]
                               Constructors 
 =============================================================================#
 
-function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=randn(Float32,P,P,2,M), classical_init=false, lipschitz_init=true)
-	if classical_init
+function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=missing, classical_init=false, lipschitz_init=true)
+	if classical_init && ismissing(W₀)
 		# Initialize with centeral difference kernels
 		c = (P - 1) ÷ 2 + 1
-		W₀ = zeros(Float32, size(W₀))
+		W₀ = zeros(Float32,P,P,2,M)
 		W₀[c-1:c+1, c, 1, 1:2:M÷2] = repeat([-1; 0; 1], 1, 1, 1, M÷4)
 		W₀[c, c-1:c+1, 1, 2:2:M÷2] = repeat([-1 0 1], 1, 1, 1, M÷4)
 		W₀[c-1:c+1, c, 2, M÷2+2:2:end] = repeat([-1; 0; 1], 1, 1, 1, M÷4)
 		W₀[c, c-1:c+1, 2, M÷2+1:2:end] = repeat([-1 0 1], 1, 1, 1, M÷4)
+	elseif ismissing(W₀)
+		W₀ = randn(Float32,P,P,2,M)
+		W₀ .-= mean(W₀, dims=(1,2))
 	end
 	padl, padr = ceil(Int,(P-s)/2), floor(Int,(P-s)/2)
 	pad = (padl, padr, padl, padr)
@@ -73,8 +76,8 @@ function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=rand
 			Bᵀ[k].weight ./= sqrt(L)
 		end
 	end
-	τ = ntuple(i->0.95f0*ones(Float32,1,1,1,1), K)
-	λ = ntuple(i->Float32(λ₀)*ones(Float32,1,1,M,1), K)
+	τ = ntuple(i->log(0.95f0)*ones(Float32,1,1,1,1), K)
+	λ = ntuple(i->Float32(log(λ₀))*ones(Float32,1,1,M,1), K)
 	∇ = Conv(sobelkernel()[1], false; pad=1)
 	return BCANet(A, Bᵀ, τ, λ, K, M, P, s, ∇)
 end
@@ -106,7 +109,7 @@ end
 #=============================================================================
                              Forward Method 
 =============================================================================#
-ST(x,τ) = sign(x)*max(0, abs(x)-τ);   # soft-thresholding
+ST(x,τ) = sign(x)*min(zero(Float32), abs(x)-τ)   # soft-thresholding
 
 # Unrolled TVL1-BCA 
 function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
@@ -117,11 +120,11 @@ function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
 	for k ∈ 1:net.K
 		# dual update
 		w += net.A[k](v)
-		w -= ST.(w, net.λ[k])
+		w -= ST.(w, exp.(net.λ[k]))
 		# primal update
-		v -= net.τ[k].*net.Bᵀ[k](w)
+		v -= exp.(net.τ[k]).*net.Bᵀ[k](w)
 		r = sum(∇u.*v, dims=3) + b
-		v += ∇u.*(ST.(r, net.τ[k].*α) - r)./(α .+ 1f-7)
+		v += ∇u.*(ST.(r, exp.(net.τ[k]).*α) - r)./(α .+ 1f-7)
 	end
 	return v, w
 end
@@ -191,7 +194,8 @@ function Π!(c::Union{Conv,ConvTranspose})
 	return nothing
 end
 function Π!(n::BCANet)
-	Π!.((n.A..., n.Bᵀ..., n.τ..., n.λ...))
+	# Π!.((n.A..., n.Bᵀ..., n.τ..., n.λ...))
+	Π!.((n.A..., n.Bᵀ...))
 	return nothing
 end
 function Π!(πn::PiBCANet)

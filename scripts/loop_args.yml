@@ -1,7 +1,9 @@
 loop: 
-  η: [1e-3, 1e-4]
-  weight_decay: [1e-4, 1e-6, 0] 
-name: "PiBCANet-lr_decay_W=1_K=10"
+  α: [1, 3]
+  Loss: ["EPE", "L1"]
+  weight_decay: [1e-4, 0] 
+  classical_init: [true, false]
+name: "PiBCANet-logthresh_alpha_loss_decay_init"
 version0: 1
 args:
   opt:
@@ -16,21 +18,22 @@ args:
     β: 1.25
     α: 1
     Δval: 5
-    epochs: 200
-    Δsched: 25
+    epochs: 1000
+    Δsched: 100
     δ: 1.1
     weight_decay: 1e-4
     use_mask: false
     gt_init: false
-    maxiter: 1000
+    maxiter: 100
+    Loss: "EPE"
   ckpt: 
   net:
     classical_init: false
-    W: 1          # Warps per scale
+    W: 0          # Warps per scale
     shared_iter: false 
     shared_scale: false
     J: 5
-    K: 10         # itrs per module
+    K: 20         # itrs per module
     M: 16         # num filters
     P: 5          # filter side length
     s: 1          # stride
@@ -38,8 +41,8 @@ args:
   data:
     dataset: "FlyingChairs"
     params:
-      σ: 5e-1
-      batch_size: 6
+      σ: [1e-3, 5e-1]
+      batch_size: 8
       J: 5
       crop_size: 256
       scale: 0

@@ -73,7 +73,7 @@ function ConvGaussian(T::Type, σ::Real=0.8; groups=1, stride=1, device=identity
 	#H(x) = conv(x, h; pad=pad, stride=stride, groups=groups)
 	return Conv(h, false; pad=pad, stride=stride, groups=groups)
 end
-ConvGaussian(σ::Real; kws...) = ConvGaussian(Float32, σ; kws...)
+ConvGaussian(σ::Real=0.8; kws...) = ConvGaussian(Float32, σ; kws...)
 
 function sobelkernel(T::Type=Float32)
 	W = zeros(T, 3,3,1,2)
