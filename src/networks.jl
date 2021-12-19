@@ -48,82 +48,68 @@ Base.getindex(πn::PiBCANet, k...) = πn.net[k...]
                               Constructors 
 =============================================================================#
 
-function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=randn(Float32,P,P,2,M), init=true)
+function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=missing, classical_init=false, lipschitz_init=true)
+	if classical_init && ismissing(W₀)
+		# Initialize with centeral difference kernels
+		c = (P - 1) ÷ 2 + 1
+		W₀ = zeros(Float32,P,P,2,M)
+		W₀[c-1:c+1, c, 1, 1:2:M÷2] = repeat([-1; 0; 1], 1, 1, 1, M÷4)
+		W₀[c, c-1:c+1, 1, 2:2:M÷2] = repeat([-1 0 1], 1, 1, 1, M÷4)
+		W₀[c-1:c+1, c, 2, M÷2+2:2:end] = repeat([-1; 0; 1], 1, 1, 1, M÷4)
+		W₀[c, c-1:c+1, 2, M÷2+1:2:end] = repeat([-1 0 1], 1, 1, 1, M÷4)
+	elseif ismissing(W₀)
+		W₀ = randn(Float32,P,P,2,M)
+		W₀ .-= mean(W₀, dims=(1,2))
+	end
 	padl, padr = ceil(Int,(P-s)/2), floor(Int,(P-s)/2)
 	pad = (padl, padr, padl, padr)
 	A = ntuple(i->Conv(copy(W₀), false; pad=pad, stride=s), K)
 	Bᵀ= ntuple(i->ConvTranspose(copy(W₀), false; pad=pad, stride=s), K)
-	if init
+	if lipschitz_init
 		L, _, flag = powermethod(x->Bᵀ[1](A[1](x)), randn(Float32,128,128,2,1), maxit=500, tol=1e-2, verbose=false)
-		if L < 0
-			println("ERROR: BCANet: powermethod: L<0. Something is very very wrong...")
-		end
 		@show L, flag
+		if L < 0
+			@error "ERROR: BCANet: powermethod: L<0. Something is very very wrong..."
+		end
 		for k ∈ 1:K
 			A[k].weight  ./= sqrt(L)
 			Bᵀ[k].weight ./= sqrt(L)
 		end
 	end
-	τ = ntuple(i->0.95f0*ones(Float32,1,1,1,1), K)
-	λ = ntuple(i->Float32(λ₀)*ones(Float32,1,1,M,1), K)
+	τ = ntuple(i->log(0.95f0)*ones(Float32,1,1,1,1), K)
+	λ = ntuple(i->Float32(log(λ₀))*ones(Float32,1,1,M,1), K)
 	∇ = Conv(sobelkernel()[1], false; pad=1)
 	return BCANet(A, Bᵀ, τ, λ, K, M, P, s, ∇)
 end
 
-function PiBCANet(; J=0, W=0, shared_iter::Bool=true, shared_scale::Bool=true, init=true, kws...)
-	# initialize dictionaries with first order derivative stencil
-	P, M = kws[:P], kws[:M]
-	W₀ = zeros(Float32, P, P, 2, M)
-	c = (kws[:P] - 1) ÷ 2 + 1
-	W₀[c-1:c+1, c, 1, 1:M÷2] = repeat([-1; 0; 1], 1, 1, 1, M÷2)
-	W₀[c, c-1:c+1, 2, M÷2+1:end] = repeat([-1 0 1], 1, 1, 1, M÷2)
-	
+function PiBCANet(; J=0, W=0, shared_iter::Bool=true, shared_scale::Bool=true, lipschitz_init=true, kws...)
 	net  = Matrix{BCANet}(undef, (J+1, W+1))
-	net[1,1] = BCANet(; kws..., W₀=copy(W₀), init=true)
+	net[1,1] = BCANet(; kws..., lipschitz_init=lipschitz_init)
 	W₀ = net[1,1].A[1].weight
 
 	if shared_iter && shared_scale
 		for j=0:J, w=0:W; net[j+1,w+1] = net[1,1]; end
 	elseif shared_iter && !shared_scale
 		for j=0:J
-			net[j+1,1] = BCANet(; kws..., W₀=copy(W₀), init=false)
+			net[j+1,1] = BCANet(; kws..., W₀=copy(W₀), lipschitz_init=false)
 			for w=1:W; net[j+1,w+1] = net[j+1,1]; end
 		end
 	elseif !shared_iter && shared_scale
 		@error "Not Implemented"
 	elseif !shared_iter && !shared_scale
 		for j=0:J, w=0:W
-			net[j+1,w+1] = BCANet(; kws..., W₀=copy(W₀), init=false)
+			net[j+1,w+1] = BCANet(; kws..., W₀=copy(W₀), lipschitz_init=false)
 		end
 	end
 
-	H = ConvGaussian(1; stride=2)
+	H = ConvGaussian(stride=2)
 	return PiBCANet(net, H)
 end
 
 #=============================================================================
                              Forward Method 
 =============================================================================#
-ST(x,τ) = sign(x)*max(0, abs(x)-τ);   # soft-thresholding
-
-function shifted_ST1(x::T, A::T, b::T, α::T, τ::T) where T <: AbstractArray
-	r = sum(A.*x, dims=3) + b
-	return @. x + A*(ST(r, τ*α) - r)/(α + 1f-7)
-end
-
-function shifted_ST2(x, A, b, α, τ)
-	r = sum(A.*x, dims=3) + b
-	mask = Zygote.dropgrad( abs.(r) .≤ τ.*α )
-	v = x - A.*(mask.*r./(α .+ 1f-7) + (1 .- mask).*τ.*sign.(r))
-	return v
-end
-
-function shifted_ST3(x, A, b, α, τ)
-	r = sum(A.*x, dims=3) + b
-	mask = Zygote.dropgrad(@. (abs(r) ≤ τ*α) )
-	v = @. x - A*(mask*r/(α + 1f-7) + (1 - mask)*τ*sign(r))
-	return v
-end
+ST(x,τ) = sign(x)*min(zero(Float32), abs(x)-τ)   # soft-thresholding
 
 # Unrolled TVL1-BCA 
 function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
@@ -135,16 +121,16 @@ function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
 	for k ∈ 1:net.K
 		# dual update
 		w += net.A[k](v)
-		w -= ST.(w, net.λ[k])
+		w -= ST.(w, exp.(net.λ[k]))
 		# primal update
-		v -= net.τ[k].*net.Bᵀ[k](w)
+		v -= exp.(net.τ[k]).*net.Bᵀ[k](w)
 		r = sum(∇u.*v, dims=3) + b
-		v += a.*(ST.(r, net.τ[k].*α) - r)
+		v += a.*(ST.(r, exp.(net.τ[k]).*α) - r)
 	end
 	return v, w
 end
 
-function (πnet::PiBCANet)(u₀, u₁, J::Int; stopgrad=false, retflows=false)
+function (πnet::PiBCANet)(u₀, u₁, J::Int; v̄=missing, stopgrad=false, retflows=false)
 	u₀, u₁, preparams = preprocess(u₀, u₁, 2^(J+πnet.s÷2))
 
 	# construct Gaussian pyramid
@@ -164,10 +150,14 @@ function (πnet::PiBCANet)(u₀, u₁, J::Int; stopgrad=false, retflows=false)
 	# init variables
 	# use similar to init with CuArrays of on CUDA
 	M, N, _, B = size(pyramid[end, 1])
-	v̄        = similar(u₀, eltype(u₀), (M, N, 2, B))
+	if ismissing(v̄)
+		v̄ = similar(u₀, eltype(u₀), (M, N, 2, B))
+		Zygote.ignore() do
+			fill!(v̄,0)
+		end
+	end
 	dual_var = similar(u₀, eltype(u₀), (M÷πnet.s, N÷πnet.s, πnet.M, B))
 	Zygote.ignore() do
-		fill!(v̄,0)
 		fill!(dual_var,0)
 	end
 	v = nothing
@@ -205,7 +195,8 @@ function Π!(c::Union{Conv,ConvTranspose})
 	return nothing
 end
 function Π!(n::BCANet)
-	Π!.((n.A..., n.Bᵀ..., n.τ..., n.λ...))
+	# Π!.((n.A..., n.Bᵀ..., n.τ..., n.λ...))
+	Π!.((n.A..., n.Bᵀ...))
 	return nothing
 end
 function Π!(πn::PiBCANet)

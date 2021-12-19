@@ -15,16 +15,29 @@ mkpath(args[:train][:savedir])
 
 # instantiate network
 loadingckpt = args[:ckpt] ≠ nothing && isfile(args[:ckpt])
-net = PiBCANet(; args[:net]..., init=!loadingckpt) |> device
+net = PiBCANet(; args[:net]..., lipschitz_init=!loadingckpt) |> device
 @show net
 
 # instantiate optimizer
 opt = ADAM(args[:opt][:η]) |> device
 
 # load data
-@warn "Only using VAL set. Change before submitting jobs."
-ds_trn = MPISintelDataset(args[:data][:root], split="trn", gray=args[:data][:gray])
-ds_val = MPISintelDataset(args[:data][:root], split="val", gray=args[:data][:gray])
+dstype = args[:data][:dataset]
+if dstype == "FlyingChairs"
+	TheDataset = FlyingChairsDataset
+elseif dstype == "MPI-Sintel"
+	TheDataset = MPISintelDataset
+else
+	@error "Dataset $dstype not implemented."
+end
+# @warn "NOT LOADING DATASETS. Change before submitting jobs."
+ds_trn = TheDataset(args[:data][:root], split="trn", gray=args[:data][:gray])
+ds_val = TheDataset(args[:data][:root], split="val", gray=args[:data][:gray])
+
+# ensure nosie-level range is given as tuple
+if args[:data][:params][:σ] isa Vector
+	args[:data][:params][:σ] = tuple(args[:data][:params][:σ]...)
+end
 
 # build dataloaders
 dl_trn = Dataloader(ds_trn, true; args[:data][:params]..., device=device)
@@ -46,5 +59,13 @@ args[:ckpt] = joinpath(args[:train][:savedir], "net.bson")
 fn = joinpath(args[:train][:savedir], "args.yml")
 saveargs(fn, args)
 
+lossfcn = args[:train][:Loss]
+if occursin("L1", lossfcn)
+	args[:train][:Loss] = L1Loss
+elseif occursin("EPE", lossfcn)
+	args[:train][:Loss] = EPELoss
+else
+	@error "Dataset $lossfcn not implemented."
+end
 train!(net, loaders, opt; start=start, device=device, args[:train]...)
  

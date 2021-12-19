@@ -33,7 +33,7 @@ function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; γ=0, β=1, maxit=100,
 	σ = T(0.99)
 
 	# init conv operators
-	W, _ = cdkernel(T) 
+	W, _ = fdkernel(T) 
 	Wd = repeat(W, 1,1,1,2) ./ sqrt(8f0)
 	D  = Conv(Wd; pad=1, groups=2) |> device
 	Dᵀ = ConvTranspose(Wd; pad=1, groups=2) |> device
@@ -202,7 +202,7 @@ function flow_ictf(u₀, u₁, λ, J; retflows=false, maxwarp=0, verbose=true, t
 	device = (u₀ isa CuArray && CUDA.functional()) ? gpu : cpu
 
 	# construct Gaussian pyramid
-	H = ConvGaussian(eltype(u₀), 1; groups=size(u₀,3), stride=2) |> device
+	H = ConvGaussian(eltype(u₀); groups=size(u₀,3), stride=2) |> device
 	pyramid = [(u₀,u₁)]
 	for j∈1:J
 		push!(pyramid, H.(pyramid[j]))

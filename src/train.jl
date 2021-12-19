@@ -35,15 +35,18 @@ function clip_total_gradnorm!(∇::Zygote.Grads, thresh)
 	return gnorm
 end
 
-function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=4f0, β=10f0, opt=missing, desc="", verbose=true, clipnorm=Inf, clipvalue=Inf, stopgrad=true, device=identity, use_mask=true)
-	clipnorm  = (clipnorm == false)  ? Inf : clipnorm
-	clipvalue = (clipvalue == false) ? Inf : clipvalue
+function passthrough!(net, data::Dataloader, training=false; Loss=L1Loss, gt_init=false, weight_decay=0, α=4f0, β=10f0, opt=missing, desc="", verbose=true, clipnorm=Inf, clipvalue=Inf, stopgrad=true, device=identity, use_mask=true, maxiter=Inf)
+	clipnorm  = (clipnorm == false)  ? Inf32 : Float32(clipnorm)
+	clipvalue = (clipvalue == false) ? Inf32 : Float32(clipvalue)
+	weight_decay = Float32(weight_decay)
+	α = Float32(α)
+	β = Float32(β)
 
 	training && @assert(!ismissing(opt),"Optimizer is required if training.") 
 	if training && clipvalue < Inf
 		opt = Optimiser(ClipValue(Float32(clipvalue)), opt)
 	end
-	P = meter.Progress(length(data), desc=desc, showspeed=true)
+	P = meter.Progress(training ? min(maxiter, length(data)) : length(data), desc=desc, showspeed=true)
 
 	# -- initialize --
 	ρ⃗ = zeros(length(data));  # loss history
@@ -55,7 +58,7 @@ function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=
 	else
 		penalty = ()-> begin 
 			local loss
-			loss = 0
+			loss = zero(Float32)
 			for j ∈ 0:net.J
 				for w ∈ 0:net.W
 					for k ∈ 1:net.K
@@ -72,25 +75,26 @@ function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=
 	for (i,F) ∈ enumerate(data)
 		local wdpen
 		J = length(F.flows)-1
-		masks = use_mask ? F.masks : missing
 		if training
 			∇L = gradient(Θ) do
-				flows = net(F.frame0, F.frame1, J; stopgrad=stopgrad, retflows=true)
+				flows = net(F.frame0, F.frame1, J; v̄= gt_init ? F.flows[J+1] : missing, stopgrad=stopgrad, retflows=true)
 				wdpen = penalty()
-				ρ     = PiLoss(L1Loss, α, β, flows, F.flows, masks) + weight_decay*wdpen 
+				ρ = PiLoss(Loss, α, β, flows, F.flows, use_mask ? F.masks : missing) + weight_decay*wdpen 
 			end
 			clip_total_gradnorm!(∇L, clipnorm)
 			total_gnorm = verbose ? gradnorm(∇L) : 0
 			update!(opt, Θ, ∇L)
 			Π!(net)
 		else 
-			flow = net(F.frame0, F.frame1, 5; retflows=false)
-			ρ = EPELoss(flow, F.flows[1], use_mask ? masks[1] : 1)
+			flow = net(F.frame0, F.frame1, J; v̄= gt_init ? F.flows[J+1] : missing, retflows=false)
+			ρ = EPELoss(flow, F.flows[1], use_mask ? F.masks[1] : 1)
 		end
-		if isnan(ρ) || ρ > 1e3
+
+		if isnan(ρ) #|| ρ > 1e3
 			@warn "passthrough!: NaN or large (>100) loss encountered"
 			return NaN
 		end
+
 		ρ⃗[i] = ρ
 		if verbose
 			values = [(:loss, @sprintf("%.3e",ρ)), (:avgloss, @sprintf("%.3e",mean(ρ⃗[1:i])))]
@@ -98,7 +102,17 @@ function passthrough!(net, data::Dataloader, training=false; weight_decay=0, α=
 			training && push!(values, (:weight_decay, @sprintf("%.3e", wdpen)))
 			push!(values, (:test, @sprintf("This should be changing if weights are updating... %.3e",sum(net[1].A[end].weight))))
 		end
+
 		meter.next!(P; showvalues = verbose ? values : [])
+		if training && i ≥ maxiter
+			shuffle!(data)
+			break
+		end
+
+		CUDA.unsafe_free!(F.frame0)
+		CUDA.unsafe_free!(F.frame1)
+		CUDA.unsafe_free!.(F.flows)
+		CUDA.unsafe_free!.(F.masks)
 	end
 	return ρ⃗
 end
@@ -111,7 +125,7 @@ function PiLoss(Loss::Function, α::T, β::T, flows, flows_gt, masks) where {T <
 		M = ismissing(masks) ? 1 : masks[j+1]
 		loss = loss + α^(-j)*β^(-W+w)*Loss(flows[j+1,w+1], flows_gt[j+1], M)
 	end
-	return loss
+	return loss 
 end
 PiLoss(f, α::Real, β::Real, args...) = PiLoss(f, Float32(α), Float32(β), args...)
 EPELoss(x,y,M) = mean(√, sum(abs2, M.*(x-y), dims=3) .+ 1f-7)
@@ -165,7 +179,7 @@ function train!(net, loaders, opt; epochs=1, Δval=5, start=1, savedir="./", ver
 						delete!(df, df.epoch .> ckpt[:epoch])
 						save(fn, df)
 					end
-					log(joinpath(savedir, "backtrack.csv"), @sprintf("%d, %.3e, %.3e\n", ♪, ρ̄-ρᵇ[phase], opt.eta)) 
+					datalog(joinpath(savedir, "backtrack.csv"), @sprintf("%d, %.3e, %.3e\n", ♪, ρ̄-ρᵇ[phase], opt.eta)) 
 
 					# -- rollback train loop --
 					net, ♪, ρᵇ = ckpt[:net] |> device, ckpt[:epoch], ckpt[:loss]
@@ -188,7 +202,7 @@ function train!(net, loaders, opt; epochs=1, Δval=5, start=1, savedir="./", ver
 			logfmt  = "%d, %.3e, %.2e \n"
 
 			# -- log --
-			log(joinpath(savedir, "$phase.csv"), @eval @sprintf($logfmt, $logdata...))
+			datalog(joinpath(savedir, "$phase.csv"), @eval @sprintf($logfmt, $logdata...))
 		end
 
 		# -- learning-rate scheduling (η ← γη) --
@@ -203,19 +217,19 @@ function train!(net, loaders, opt; epochs=1, Δval=5, start=1, savedir="./", ver
 	if :tst ∈ keys(loaders)
 		ρ⃗ = passthrough!(net, loaders[:tst]; desc="TST:", verbose=verbose, device=device, kws...)
 		ρ̄ = mean(ρ⃗)
-		log(joinpath(savedir, "tst.csv"), @sprintf("%s, %.3f\n", loaders[:tst].dataset.name, ρ̄))
+		datalog(joinpath(savedir, "tst.csv"), @sprintf("%s, %.3f\n", loaders[:tst].dataset.name, ρ̄))
 	end
 
 	return nothing
 end
 
-function log(fn::String, data::String)
+function datalog(fn::String, data::String)
 	open(fn, "a") do io
 		write(io, data)
 	end
 	return nothing
 end
-log(fn::String, data::Vector) = log(fn, join(string.(data),',')*"\n")
+datalog(fn::String, data::Vector) = datalog(fn, join(string.(data),',')*"\n")
 
 function init_tracker(savedir)
 	df = Dict(:trn=>DataFrame(epoch=[-1], loss=[0], lr=[0]), :val=>DataFrame(epoch=[-1], loss=[0], lr=[0]))

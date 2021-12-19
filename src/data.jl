@@ -235,9 +235,9 @@ end
 function Dataloader(ds::AbstractDataset, training::Bool; batch_size::Int=1, crop_size::Int=128, scale=0, J=0, σ::Union{<:Real,Tuple,Vector}=0, device=identity)
 	σ′ = Float32.((scale+1) .* σ./255)
 	faugment(F) = training ? augment(F, crop_size) : F
-	blur_ops = (ConvGaussian(1; groups=size(ds[1].frame0,3), stride=2, device=device),
-		ConvGaussian(1; groups=2, stride=2, device=device),
-		ConvGaussian(1; groups=1, stride=2, device=device))
+	blur_ops = (ConvGaussian(groups=size(ds[1].frame0,3), stride=2, device=device),
+		ConvGaussian(groups=2, stride=2, device=device),
+		ConvGaussian(groups=1, stride=2, device=device))
 	xfrm(Fb) = transform(faugment, Fb, σ′, scale, J, blur_ops; device=device)
 	dl = Dataloader(ds, xfrm, batch_size, 1:length(ds))
 	shuffle!(dl)
