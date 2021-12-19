@@ -130,6 +130,7 @@ function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
 	∇u = net.∇(u₁)
 	b  = u₁ - u₀ - sum(∇u.*v̄, dims=3)
 	α  = sum(abs2, ∇u, dims=3)
+	a  = ∇u ./ (α .+ 1f-7)
 	v  = v̄
 	for k ∈ 1:net.K
 		# dual update
@@ -138,7 +139,7 @@ function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
 		# primal update
 		v -= net.τ[k].*net.Bᵀ[k](w)
 		r = sum(∇u.*v, dims=3) + b
-		v += ∇u.*(ST.(r, net.τ[k].*α) - r)./(α .+ 1f-7)
+		v += a.*(ST.(r, net.τ[k].*α) - r)
 	end
 	return v, w
 end
