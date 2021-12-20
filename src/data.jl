@@ -2,17 +2,39 @@
 data.jl
 =#
 
+"""
+    loadargs(fn::String)
+
+Load arguments (.yml) YAML file.
+"""
 loadargs(fn::String) = YAML.load_file(fn; dicttype=Dict{Symbol,Any})
+
+"""
+    saveargs(fn::String, args::Dict{Symbol,Any})
+
+Save arguments dictionary to (.yml) YAML file.
+"""
 saveargs(fn::String, args::Dict{Symbol,Any}) = YAML.write_file(fn, args)
 
 #=============================================================================
                             Image <-> Tensor
 =============================================================================#
 
+"""
+    tensor2img(A::Array{<:Real,2})
+
+Convert matrix of reals into grayscale image.
+"""
 function tensor2img(A::Array{<:Real,2})
 	tensor2img(Gray, A)
 end
 
+"""
+    tensor2img(A::Array{<:Real,4})
+
+Convert multi-dim tensor to (batched, if size(A,4)>1) matrix of 
+Gray (size(A,3)==1) or RGB (size(A,3)==3) values.
+"""
 function tensor2img(A::Array{<:Real,4})
 	if size(A)[3] == 1
 		return cat([tensor2img(A[:,:,1,i]) for i ∈ 1:size(A,4)]..., dims=3)
@@ -24,10 +46,21 @@ function tensor2img(A::Array{<:Real,4})
 	return out
 end
 
-function tensor2img(ctype, A::Array{<:Real}) 
+"""
+    tensor2img(ctype::Type, A::Array{<:Real})
+
+Convert multi-dim tensor of real values into image with elements of ctype{N0f8}.
+"""
+function tensor2img(ctype::Type, A::Array{<:Real}) 
 	reinterpret(reshape, ctype{N0f8}, N0f8.(clamp.(A,0,1)))
 end
 
+"""
+    img2tensor(T::Type, img)
+
+Convert grayscale or RGB image to 4-tensor (W,H,C,1) with elements of type T
+(default T==Float32).
+"""
 function img2tensor(T::Type, img)
 	B = T.(reinterpret(reshape, N0f8, img) |> collect)
 	if ndims(B) == 3
@@ -40,6 +73,12 @@ function img2tensor(T::Type, img)
 end
 img2tensor(A) = img2tensor(Float32, A)
 
+"""
+    tensorload(T::Type, path::String; gray::Bool=false)
+
+Load image or flow (.flo) file into 4D tensor. Optionally convert RGB images to
+grayscale. Default type is Float32.
+"""
 function tensorload(T::Type, path::String; gray::Bool=false)
 	A = load(path)
 	# load optical flow
@@ -51,11 +90,21 @@ function tensorload(T::Type, path::String; gray::Bool=false)
 end
 tensorload(path::String; gray::Bool=false) = tensorload(Float32, path; gray=gray)
 
+"""
+    flo2tensor(T::Type, flo)
+
+Convert .flo file loaded from OpticalFlowUtils.jl to 4D tensor (W,H,2,1).
+"""
 function flo2tensor(T::Type, flo)
 	return permutedims(convert(Array{T,3},flo), (2,3,1)) |> Flux.unsqueeze(4)
 end
 flo2tensor(A) = flo2tensor(Float32, A)
 
+"""
+    colorflow(flow::Array{T,4}, maxflow)
+
+Convert flow tensor to HSV colorspace for display. Flows are normalized (in norm) by maxflow.
+"""
 function colorflow(flow::Array{T,4}; maxflow=maximum(mapslices(norm, flow, dims=3))) where {T}
 	CT = HSV{Float32}
 	color(x1, x2) = ismissing(x1) || ismissing(x2) ?

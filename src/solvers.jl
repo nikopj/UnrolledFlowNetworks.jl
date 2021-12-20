@@ -58,9 +58,7 @@ function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; γ=0, β=1, maxit=100,
 
 	# image driven regularization
 	α₀ = sqrt.(sum(abs2, ∇u₀, dims=3))
-	# E = T.(exp.(-γ.*(α₀.^β)) .+ 1f-3)
 	E = T.(1 .- sigmoid.(γ.*(α₀ .- β)))
-
 
 	k = 0
 	while k == 0 || k < maxit && residual[k] > tol
