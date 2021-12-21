@@ -15,8 +15,8 @@ cat > scripts/job.sh << EOF
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=1
-#SBATCH --time=36:00:00
-#SBATCH --mem=16GB
+#SBATCH --time=46:00:00
+#SBATCH --mem=8GB
 #SBATCH --array=$2-$3
 #SBATCH --job-name=${1}-${ver}
 #SBATCH --mail-type=END

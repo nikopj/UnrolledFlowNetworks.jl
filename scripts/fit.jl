@@ -42,7 +42,7 @@ end
 # build dataloaders
 dl_trn = Dataloader(ds_trn, true; args[:data][:params]..., device=device)
 dl_val = Dataloader(ds_val, false; batch_size=1, J=args[:data][:params][:J], scale=args[:data][:params][:scale], device=device)
-loaders = (trn=dl_trn, val=dl_val, tst=dl_val)
+loaders = (trn=dl_trn, val=dl_val)
 @show loaders
 
 start = 1

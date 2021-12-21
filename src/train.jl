@@ -46,10 +46,11 @@ function passthrough!(net, data::Dataloader, training=false; Loss=L1Loss, gt_ini
 	if training && clipvalue < Inf
 		opt = Optimiser(ClipValue(Float32(clipvalue)), opt)
 	end
-	P = meter.Progress(training ? min(maxiter, length(data)) : length(data), desc=desc, showspeed=true)
+	N = training ? min(maxiter, length(data)) : length(data)
+	P = meter.Progress(N, desc=desc, showspeed=true)
 
 	# -- initialize --
-	ρ⃗ = zeros(length(data));  # loss history
+	ρ⃗ = zeros(N);  # loss history
 	Θ = params(net)
 	total_gnorm = 0
 

@@ -282,7 +282,7 @@ mutable struct Dataloader
 end
 
 function Dataloader(ds::AbstractDataset, training::Bool; batch_size::Int=1, crop_size::Int=128, scale=0, J=0, σ::Union{<:Real,Tuple,Vector}=0, device=identity)
-	σ′ = Float32.((scale+1) .* σ./255)
+	σ′ = training ? Float32.((scale+1) .* σ./255) : 0f0
 	faugment(F) = training ? augment(F, crop_size) : F
 	blur_ops = (ConvGaussian(groups=size(ds[1].frame0,3), stride=2, device=device),
 		ConvGaussian(groups=2, stride=2, device=device),

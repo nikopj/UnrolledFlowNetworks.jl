@@ -1,9 +1,9 @@
-loop: 
-  α: [1, 3]
+loop:
   Loss: ["EPE", "L1"]
+  η: [1e-3, 1e-4]
   weight_decay: [1e-4, 0] 
   classical_init: [true, false]
-name: "PiBCANet-logthresh_alpha_loss_decay_init"
+name: "PiBCANet-tanh_init_decay_loss_lr"
 version0: 1
 args:
   opt:
@@ -19,8 +19,8 @@ args:
     α: 1
     Δval: 5
     epochs: 1000
-    Δsched: 100
-    δ: 1.1
+    Δsched: 200
+    δ: 1.5
     weight_decay: 1e-4
     use_mask: false
     gt_init: false
@@ -37,7 +37,7 @@ args:
     M: 16         # num filters
     P: 5          # filter side length
     s: 1          # stride
-    λ₀: 1e-2      # initial threshold
+    λ₀: 1e-1      # initial threshold
   data:
     dataset: "FlyingChairs"
     params:

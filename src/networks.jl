@@ -9,8 +9,8 @@ networks.jl
 struct BCANet{K,C,Cᵀ,T,S,R}
 	A::NTuple{K,C}   # analysis conv
 	Bᵀ::NTuple{K,Cᵀ} # synthesis conv
-	τ::S             # primal step-size
-	λ::NTuple{K,T}   # lagrange multiplier
+	τ::S             # log-domain primal step-size
+	λ::NTuple{K,T}   # log-domain lagrange multiplier
 	K::Int           # iterations
 	M::Int           # number of filters / 2
 	P::Int           # filter size (square side-length)
@@ -76,8 +76,8 @@ function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=miss
 			Bᵀ[k].weight ./= sqrt(L)
 		end
 	end
-	τ = ntuple(i->log(0.95f0)*ones(Float32,1,1,1,1), K)
-	λ = ntuple(i->Float32(log(λ₀))*ones(Float32,1,1,M,1), K)
+	τ  = ntuple(i->log(0.95f0)*ones(Float32,1,1,1,1), K)
+	λ  = ntuple(i->Float32(log(λ₀))*ones(Float32,1,1,M,1), K)
 	∇ = Conv(sobelkernel()[1], false; pad=1)
 	return BCANet(A, Bᵀ, τ, λ, K, M, P, s, ∇)
 end
@@ -110,22 +110,24 @@ end
                              Forward Method 
 =============================================================================#
 ST(x,τ) = sign(x)*min(zero(Float32), abs(x)-τ)   # soft-thresholding
+softST(x,τ) = x - τ*tanh(x/τ)
+softclip(x,τ) = τ*tanh(x/τ)
 
 # Unrolled TVL1-BCA 
 function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
 	∇u = net.∇(u₁)
 	b  = u₁ - u₀ - sum(∇u.*v̄, dims=3)
-	α  = sum(abs2, ∇u, dims=3)
-	a  = ∇u ./ (α .+ 1f-7)
+	α  = sum(abs2, ∇u, dims=3) .+ 1f-7
+	a  = ∇u ./ α
 	v  = v̄
 	for k ∈ 1:net.K
 		# dual update
 		w += net.A[k](v)
-		w -= ST.(w, exp.(net.λ[k]))
+		w = softclip.(w, exp.(net.λ[k]))
 		# primal update
-		v -= exp.(net.τ[k]).*net.Bᵀ[k](w)
+		v -= net.Bᵀ[k](w)
 		r = sum(∇u.*v, dims=3) + b
-		v += a.*(ST.(r, exp.(net.τ[k]).*α) - r)
+		v += a.*(softST.(r, exp.(net.τ[k]).*α) - r)
 	end
 	return v, w
 end
