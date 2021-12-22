@@ -241,16 +241,12 @@ function MPISintelDataset(root::String; split="trn", type="clean", gray=false)
 	else
 		d = joinpath(root, "training", split*".txt") |> readdlm 
 	end
-	f(x) = gray ? begin
-		x = load(x)
-		x = eltype(x) <: RGB ? Gray.(x) : x
-	end : load(x)
 	loadset(dir) = begin
 		paths = d .|> x->joinpath(root, "training", dir, x)
 		listfn = [readdir(p, join=true) for p in paths]
 		N = sum(length.(listfn))
 		P = meter.Progress(N, desc=uppercase(split)*"-"*dir*" ")
-		[ntuple(i-> begin meter.next!(P); f(vecfn[i]); end, length(vecfn)) for vecfn in listfn]
+		[ntuple(i-> begin meter.next!(P); vecfn[i]; end, length(vecfn)) for vecfn in listfn]
 	end
 	data = FlowData(loadset.((type,"flow","occlusions","invalid"))...)
 	findex = []
@@ -264,10 +260,10 @@ Base.length(ds::MPISintelDataset) = length(ds.findex)
 function Base.getindex(ds::MPISintelDataset, i::Int)
 	p, q = ds.findex[i]
 	fD = ds.data
-	FlowSample(img2tensor(fD.frame[p][q]), 
-	           img2tensor(fD.frame[p][q+1]), 
-	           flo2tensor(fD.flow[p][q]),
-	           Float32.((1f0 .- fD.invalid[p][q]).*(1f0 .- fD.occlusion[p][q])))
+	FlowSample(tensorload(fD.frame[p][q], gray=ds.gray), 
+	           tensorload(fD.frame[p][q+1], gray=ds.gray), 
+	           tensorload(fD.flow[p][q]),
+	           Float32.((1f0 .- tensorload(fD.invalid[p][q])).*(1f0 .- tensorload(fD.occlusion[p][q]))))
 end
 
 #==============================================================================
@@ -345,8 +341,8 @@ function transform(f_augment::Function, Fb::Vector{FlowSample}, σ, scale, J, bl
 	Fb.frame1 = awgn(Fb.frame1, σ)[1] |> x->clamp!(x,0,1)
 
 	# pad
-	pad = calcpad(size(Fb.frame0)[1:2], 2^(scale+J))
-	Fb = broadcast!(x->pad_reflect(x, pad, dims=(1,2)), Fb)
+	# pad = calcpad(size(Fb.frame0)[1:2], 2^(scale+J))
+	# Fb = broadcast!(x->pad_reflect(x, pad, dims=(1,2)), Fb)
 
 	Fb = Fb |> device
 

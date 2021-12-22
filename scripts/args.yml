@@ -1,11 +1,11 @@
 opt:
   η: 1e-3
 train:
-  α: 1
+  α: 0.8
   Δval: 5
   Δsched: 10
   clipvalue: 1.0
-  weight_decay: 0
+  weight_decay: 1e-5
   verbose: true
   δ: 1.5
   clipnorm: false
@@ -17,7 +17,7 @@ train:
   use_mask: false
   gt_init: false
   maxiter: 50
-  Loss: "L1"
+  Loss: "EPE"
 ckpt: 
 net:
   classical_init: false

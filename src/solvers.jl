@@ -33,7 +33,7 @@ function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; γ=0, β=1, maxit=100,
 	σ = T(0.99)
 
 	# init conv operators
-	W, _ = fdkernel(T) 
+	W, _ = cdkernel(T) 
 	Wd = repeat(W, 1,1,1,2) ./ sqrt(8f0)
 	D  = Conv(Wd; pad=1, groups=2) |> device
 	Dᵀ = ConvTranspose(Wd; pad=1, groups=2) |> device
