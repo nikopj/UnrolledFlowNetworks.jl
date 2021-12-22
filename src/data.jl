@@ -123,6 +123,7 @@ end
                                  FLOWDATA/SAMPLE
 ==============================================================================#
 
+# hold filenames for complicated datastructures such as MPI-Sintel dataset.
 struct FlowData
 	frame
 	flow
@@ -130,6 +131,7 @@ struct FlowData
 	invalid
 end
 
+# A (batched) image pair with its ground truth flow sample and occlusion mask.
 mutable struct FlowSample
 	frame0 
 	frame1 
@@ -186,6 +188,13 @@ mutable struct FlyingChairsDataset <: AbstractDataset
 	gray::Bool
 end
 
+"""
+    FlyingChairsDataset(root; split="trn", gray=false)
+
+Instantiate the Flying Chairs dataset located at root="dataset/FlyingChairs".
+Specify if images should be loaded in color or grayscale. A file root/train_val.txt
+should indicate which image pairs are part of the train (1) or val (2) dataset.
+"""
 function FlyingChairsDataset(root::String; split="trn", gray=false)
 	# get filenames of flows
 	vecfn = filter(x->occursin(".flo", x), readdir("dataset/FlyingChairs/data/"))
@@ -235,6 +244,13 @@ mutable struct MPISintelDataset <: AbstractDataset
 	gray::Bool
 end
 
+"""
+    MPISintelDataset(root; split="trn", gray=false)
+
+Instantiate the MPISintel dataset located at root="dataset/MPISintel".
+Specify if images should be loaded in color or grayscale. A file root/split.txt
+should indicate which sequences (folder names) are part of the split (trn or val) dataset.
+"""
 function MPISintelDataset(root::String; split="trn", type="clean", gray=false)
 	if split == "all"
 		d = readdir(joinpath(root, "training/clean"))
@@ -277,6 +293,14 @@ mutable struct Dataloader
 	minibatches::AbstractVector # shuffled vector of mini-batch indices in dataset
 end
 
+"""
+    Dataloader(ds::AbstractDataset, training::Bool; batch_size=1, crop_size=128, scale=0, J=0, σ=0, device=identity)
+
+Instantiate a dataloader given a dataset. If training, samples will be cropped
+and augmented. Samples will be filtered to scale and then will be presented as
+a Gaussian pyramid of scale J+1. AWGN of standard deviation σ will be added to
+each channel.
+"""
 function Dataloader(ds::AbstractDataset, training::Bool; batch_size::Int=1, crop_size::Int=128, scale=0, J=0, σ::Union{<:Real,Tuple,Vector}=0, device=identity)
 	σ′ = training ? Float32.((scale+1) .* σ./255) : 0f0
 	faugment(F) = training ? augment(F, crop_size) : F
@@ -288,6 +312,11 @@ function Dataloader(ds::AbstractDataset, training::Bool; batch_size::Int=1, crop
 	shuffle!(dl)
 end
 
+"""
+    Dataloader(ds::AbstractDataset, transform::Function, bs::Int)
+
+Instantiate a dataloader with dataset ds and transform each element of batch-size bs online. 
+"""
 function Dataloader(ds::AbstractDataset, transform::Function, bs::Int)
 	dl = Dataloader(ds, transform, bs, 1:length(ds))
 	shuffle!(dl)
@@ -325,6 +354,8 @@ end
 #==============================================================================
                                  TRANSFORMS
 ==============================================================================#
+
+# simple data augmentation: random flips and crop
 function augment(F::FlowSample, crop_size)
 	F = randcrop(F, crop_size)
 	F = randflip(F, 0.5, 1)

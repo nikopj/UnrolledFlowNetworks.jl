@@ -131,9 +131,6 @@ end
 PiLoss(f, α::Real, β::Real, args...) = PiLoss(f, Float32(α), Float32(β), args...)
 EPELoss(x,y,M) = mean(√, sum(abs2, M.*(x-y), dims=3) .+ 1f-7)
 L1Loss(x,y,M)  = mean(abs, M.*(x-y))
-# @warn "EPE and L1Loss are without Masks."
-#EPELoss(v′,v,M) = mean(√, sum(abs2, v′ - v, dims=3) .+ 1f-3)
-#L1Loss(v′,v,M)  = mean(abs, v′ - v )
 
 function train!(net, loaders, opt; epochs=1, Δval=5, start=1, savedir="./", verbose=true, δ=0.5, γ=0.99, Δsched=1, device=identity, kws...)
 	@assert δ > 1 "Backtracking multiplier δ=$δ must be greater than 1."
