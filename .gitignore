@@ -1,4 +1,5 @@
 models/
+experiments/
 slurm.d/
 dataset/
 args.d/

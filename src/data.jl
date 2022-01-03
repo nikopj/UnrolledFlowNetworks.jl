@@ -36,11 +36,14 @@ Convert multi-dim tensor to (batched, if size(A,4)>1) matrix of
 Gray (size(A,3)==1) or RGB (size(A,3)==3) values.
 """
 function tensor2img(A::Array{<:Real,4})
-	if size(A)[3] == 1
-		return cat([tensor2img(A[:,:,1,i]) for i ∈ 1:size(A,4)]..., dims=3)
+	if size(A,3) == 1
+		out = cat([tensor2img(Gray, A[:,:,1,i]) for i ∈ 1:size(A,4)]..., dims=3)
+	elseif size(A,3) == 3
+		out = cat([tensor2img(RGB, permutedims(A[:,:,:,i], (3,1,2))) for i ∈ 1:size(A,4)]..., dims=3)
+	else
+		@error "Channel $(size(A,3)) dim must 1 or 3."
 	end
-	out = cat([tensor2img(RGB, permutedims(A[:,:,:,i], (3,1,2))) for i ∈ 1:size(A,4)]..., dims=3)
-	if size(out, 3) == 1
+	if size(out,3) == 1
 		return out[:,:,1]
 	end
 	return out
@@ -123,6 +126,7 @@ end
                                  FLOWDATA/SAMPLE
 ==============================================================================#
 
+# hold filenames for complicated datastructures such as MPI-Sintel dataset.
 struct FlowData
 	frame
 	flow
@@ -130,6 +134,7 @@ struct FlowData
 	invalid
 end
 
+# A (batched) image pair with its ground truth flow sample and occlusion mask.
 mutable struct FlowSample
 	frame0 
 	frame1 
@@ -186,17 +191,30 @@ mutable struct FlyingChairsDataset <: AbstractDataset
 	gray::Bool
 end
 
-function FlyingChairsDataset(root::String; split="trn", gray=false)
+"""
+    FlyingChairsDataset(root; split="trn", gray=false)
+
+Instantiate the Flying Chairs dataset located at root="dataset/FlyingChairs".
+Specify if images should be loaded in color or grayscale. A file root/train_val.txt
+should indicate which image pairs are part of the train (1) or val (2) dataset.
+"""
+function FlyingChairsDataset(root::String; split="trn", gray=false, flomin=0, flomax=Inf)
 	# get filenames of flows
-	vecfn = filter(x->occursin(".flo", x), readdir("dataset/FlyingChairs/data/"))
+	vecfn = filter(x->occursin(".flo", x), readdir(joinpath(root, "data")))
 	# get numbers within filenames
 	vecindex = map(x->parse(Int, SubString(x, 1:5)), vecfn)
 
 	# get training or val subset
 	if split ∈ ("trn", "val")
-		trn_val = readdlm(joinpath(root, "train_val.txt"), Int)[:,1] .== (split=="trn" ? 1 : 2)
-		vecindex = vecindex[trn_val]
+		keep = readdlm(joinpath(root, "train_val.txt"), Int)[:,1] .== (split=="trn" ? 1 : 2)
+	else
+		keep = ones(length(vecindex))
 	end
+
+	# take subset defined by train_val split and flow magnitude min-max requirements
+	stats = DataFrame(load(joinpath(root, "stats.csv")))
+	keep = keep .* (stats.min .> flomin) .* (stats.max .< flomax) .|> Bool
+	vecindex = vecindex[keep]
 
 	# function to get filenames for "img1", "img2", or "flow"
 	getfilenames(name) = begin
@@ -235,6 +253,13 @@ mutable struct MPISintelDataset <: AbstractDataset
 	gray::Bool
 end
 
+"""
+    MPISintelDataset(root; split="trn", gray=false)
+
+Instantiate the MPISintel dataset located at root="dataset/MPISintel".
+Specify if images should be loaded in color or grayscale. A file root/split.txt
+should indicate which sequences (folder names) are part of the split (trn or val) dataset.
+"""
 function MPISintelDataset(root::String; split="trn", type="clean", gray=false)
 	if split == "all"
 		d = readdir(joinpath(root, "training/clean"))
@@ -277,6 +302,14 @@ mutable struct Dataloader
 	minibatches::AbstractVector # shuffled vector of mini-batch indices in dataset
 end
 
+"""
+    Dataloader(ds::AbstractDataset, training::Bool; batch_size=1, crop_size=128, scale=0, J=0, σ=0, device=identity)
+
+Instantiate a dataloader given a dataset. If training, samples will be cropped
+and augmented. Samples will be filtered to scale and then will be presented as
+a Gaussian pyramid of scale J+1. AWGN of standard deviation σ will be added to
+each channel.
+"""
 function Dataloader(ds::AbstractDataset, training::Bool; batch_size::Int=1, crop_size::Int=128, scale=0, J=0, σ::Union{<:Real,Tuple,Vector}=0, device=identity)
 	σ′ = training ? Float32.((scale+1) .* σ./255) : 0f0
 	faugment(F) = training ? augment(F, crop_size) : F
@@ -288,6 +321,11 @@ function Dataloader(ds::AbstractDataset, training::Bool; batch_size::Int=1, crop
 	shuffle!(dl)
 end
 
+"""
+    Dataloader(ds::AbstractDataset, transform::Function, bs::Int)
+
+Instantiate a dataloader with dataset ds and transform each element of batch-size bs online. 
+"""
 function Dataloader(ds::AbstractDataset, transform::Function, bs::Int)
 	dl = Dataloader(ds, transform, bs, 1:length(ds))
 	shuffle!(dl)
@@ -325,6 +363,8 @@ end
 #==============================================================================
                                  TRANSFORMS
 ==============================================================================#
+
+# simple data augmentation: random flips and crop
 function augment(F::FlowSample, crop_size)
 	F = randcrop(F, crop_size)
 	F = randflip(F, 0.5, 1)

@@ -14,7 +14,7 @@ Take a look at the `scripts/fit.jl` file for a simple interface with the codebas
 Training can take place at the REPL by editing the parameters of the `scripts/args.yml`,
 or via the command line by:
 ```julia
-$ julia --project=. scripts/fit.jl 
+$ julia --project=. scripts/fit.jl path/to/args.yml
 ```
 
 ## Files
@@ -47,3 +47,4 @@ your own networks.
 - good intermediate flows?
 	- test PiLoss alpha
 	- train separete BCANet at small scales
+- make FlowSample and FlowSamplePyramid Structs with type decoration

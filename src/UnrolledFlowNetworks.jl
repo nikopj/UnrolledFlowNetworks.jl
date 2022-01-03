@@ -14,7 +14,7 @@ using Random: shuffle
 using DelimitedFiles
 
 include("utils.jl")
-export loadargs, saveargs, warp_bilinear, ConvGaussian, ConvSobel, setrecursive!
+export loadargs, saveargs, warp_bilinear, ConvGaussian, ConvSobel, setrecursive!, get_pyramid
 
 include("solvers.jl")
 export flow_ictf

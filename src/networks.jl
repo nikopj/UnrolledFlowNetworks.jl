@@ -49,6 +49,7 @@ Base.getindex(πn::PiBCANet, k...) = πn.net[k...]
 =============================================================================#
 
 function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=missing, classical_init=false, lipschitz_init=true)
+	# weight init
 	if classical_init && ismissing(W₀)
 		# Initialize with centeral difference kernels
 		c = (P - 1) ÷ 2 + 1
@@ -61,10 +62,13 @@ function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=miss
 		W₀ = randn(Float32,P,P,2,M)
 		W₀ .-= mean(W₀, dims=(1,2))
 	end
+
+	# conv op init
 	padl, padr = ceil(Int,(P-s)/2), floor(Int,(P-s)/2)
 	pad = (padl, padr, padl, padr)
 	A = ntuple(i->Conv(copy(W₀), false; pad=pad, stride=s), K)
 	Bᵀ= ntuple(i->ConvTranspose(copy(W₀), false; pad=pad, stride=s), K)
+
 	if lipschitz_init
 		L, _, flag = powermethod(x->Bᵀ[1](A[1](x)), randn(Float32,128,128,2,1), maxit=500, tol=1e-2, verbose=false)
 		@show L, flag
@@ -76,9 +80,14 @@ function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=miss
 			Bᵀ[k].weight ./= sqrt(L)
 		end
 	end
+	
+	# threshold init 
 	τ  = ntuple(i->log(0.95f0)*ones(Float32,1,1,1,1), K)
 	λ  = ntuple(i->Float32(log(λ₀))*ones(Float32,1,1,M,1), K)
+
+	# spatial gradient operator (non learned)
 	∇ = Conv(sobelkernel()[1], false; pad=1)
+
 	return BCANet(A, Bᵀ, τ, λ, K, M, P, s, ∇)
 end
 
@@ -109,11 +118,11 @@ end
 #=============================================================================
                              Forward Method 
 =============================================================================#
-ST(x,τ) = sign(x)*min(zero(Float32), abs(x)-τ)   # soft-thresholding
-softST(x,τ) = x - τ*tanh(x/τ)
-softclip(x,τ) = τ*tanh(x/τ)
+ST(x,τ) = sign(x)*min(zero(Float32), abs(x)-τ) # shrinkage-thresholding
+softST(x,τ) = x - τ*tanh(x/τ)                  # soft/differentiable ST
+softclip(x,τ) = τ*tanh(x/τ)                    # soft/differentiable clipping
 
-# Unrolled TVL1-BCA 
+# Unrolled TVL1-BCA forward pass
 function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
 	∇u = net.∇(u₁)
 	b  = u₁ - u₀ - sum(∇u.*v̄, dims=3)
@@ -193,11 +202,9 @@ end
 Π!(t::AbstractArray) = clamp!(t, 0, Inf)
 function Π!(c::Union{Conv,ConvTranspose})
 	c.weight ./= max.(1, sqrt.(sum(abs2, c.weight, dims=(1,2))))
-	#c.weight .-= mean(c.weight, dims=(1,2))
 	return nothing
 end
 function Π!(n::BCANet)
-	# Π!.((n.A..., n.Bᵀ..., n.τ..., n.λ...))
 	Π!.((n.A..., n.Bᵀ...))
 	return nothing
 end

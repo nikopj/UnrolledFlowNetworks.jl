@@ -31,18 +31,20 @@ else
 	@error "Dataset $dstype not implemented."
 end
 # @warn "NOT LOADING DATASETS. Change before submitting jobs."
-ds_trn = TheDataset(args[:data][:root], split="trn", gray=args[:data][:gray])
-ds_val = TheDataset(args[:data][:root], split="val", gray=args[:data][:gray])
+ds_trn = TheDataset(args[:data][:root]; split="trn", args[:data][:ds_params]...)
+ds_val = TheDataset(args[:data][:root]; split="val", args[:data][:ds_params]...)
+ds_tst = MPISintelDataset("dataset/MPI_Sintel"; split="all", gray=args[:data][:ds_params][:gray])
 
 # ensure nosie-level range is given as tuple
-if args[:data][:params][:σ] isa Vector
-	args[:data][:params][:σ] = tuple(args[:data][:params][:σ]...)
+if args[:data][:dl_params][:σ] isa Vector
+	args[:data][:dl_params][:σ] = tuple(args[:data][:dl_params][:σ]...)
 end
 
 # build dataloaders
-dl_trn = Dataloader(ds_trn, true; args[:data][:params]..., device=device)
-dl_val = Dataloader(ds_val, false; batch_size=1, J=args[:data][:params][:J], scale=args[:data][:params][:scale], device=device)
-loaders = (trn=dl_trn, val=dl_val)
+dl_trn = Dataloader(ds_trn, true; args[:data][:dl_params]..., device=device)
+dl_val = Dataloader(ds_val, false; batch_size=1, J=args[:data][:dl_params][:J], scale=args[:data][:dl_params][:scale], device=device)
+dl_tst = Dataloader(ds_tst, false; batch_size=1, J=args[:data][:dl_params][:J], scale=args[:data][:dl_params][:scale], device=device)
+loaders = (trn=dl_trn, val=dl_val, tst=dl_tst)
 @show loaders
 
 start = 1
@@ -67,5 +69,6 @@ elseif occursin("EPE", lossfcn)
 else
 	@error "Dataset $lossfcn not implemented."
 end
+
 train!(net, loaders, opt; start=start, device=device, args[:train]...)
- 
+
