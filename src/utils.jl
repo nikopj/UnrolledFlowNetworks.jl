@@ -73,7 +73,14 @@ function ConvGaussian(T::Type, σ::Real=0.8; groups=1, stride=1, device=identity
 	#H(x) = conv(x, h; pad=pad, stride=stride, groups=groups)
 	return Conv(h, false; pad=pad, stride=stride, groups=groups)
 end
-ConvGaussian(σ::Real=0.8; kws...) = ConvGaussian(Float32, σ; kws...)
+ConvGaussian(σ::Real=1; kws...) = ConvGaussian(Float32, σ; kws...)
+
+function get_pyramid(x::AbstractArray, J::Int, H=ConvGaussian(;groups=size(x,3), stride=2); buffer=missing)
+	pyramid = ismissing(buffer) ? Vector{typeof(x)}(undef, J+1) : buffer
+	pyramid[1] = x
+	for j=2:J+1; pyramid[j] = H(pyramid[j-1]); end
+	return pyramid
+end
 
 function sobelkernel(T::Type=Float32)
 	W = zeros(T, 3,3,1,2)

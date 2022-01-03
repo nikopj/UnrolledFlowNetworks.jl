@@ -1,7 +1,7 @@
 opt:
   η: 1e-3
 train:
-  α: 0.8
+  α: 0.5
   Δval: 5
   Δsched: 10
   clipvalue: 1.0
@@ -24,19 +24,21 @@ net:
   shared_iter: false
   shared_scale: false
   P: 5
-  M: 16
+  M: 8
   s: 1
   W: 0
-  J: 5
-  K: 20
+  J: 0
+  K: 10
   λ₀: 1e-1
 data:
   dataset: "FlyingChairs"
-  params:
-    σ: [1e-3, 5e-1]
-    batch_size: 8
-    J: 5
-    crop_size: 256
-    scale: 0
   root: "dataset/FlyingChairs/"
-  gray: true
+  ds_params:
+    gray: true
+    flomax: 32
+  dl_params:
+    σ: [1e-3, 5e-1]
+    batch_size: 2
+    J: 0
+    crop_size: 256
+    scale: 5

@@ -36,11 +36,14 @@ Convert multi-dim tensor to (batched, if size(A,4)>1) matrix of
 Gray (size(A,3)==1) or RGB (size(A,3)==3) values.
 """
 function tensor2img(A::Array{<:Real,4})
-	if size(A)[3] == 1
-		return cat([tensor2img(A[:,:,1,i]) for i ∈ 1:size(A,4)]..., dims=3)
+	if size(A,3) == 1
+		out = cat([tensor2img(Gray, A[:,:,1,i]) for i ∈ 1:size(A,4)]..., dims=3)
+	elseif size(A,3) == 3
+		out = cat([tensor2img(RGB, permutedims(A[:,:,:,i], (3,1,2))) for i ∈ 1:size(A,4)]..., dims=3)
+	else
+		@error "Channel $(size(A,3)) dim must 1 or 3."
 	end
-	out = cat([tensor2img(RGB, permutedims(A[:,:,:,i], (3,1,2))) for i ∈ 1:size(A,4)]..., dims=3)
-	if size(out, 3) == 1
+	if size(out,3) == 1
 		return out[:,:,1]
 	end
 	return out
@@ -195,17 +198,23 @@ Instantiate the Flying Chairs dataset located at root="dataset/FlyingChairs".
 Specify if images should be loaded in color or grayscale. A file root/train_val.txt
 should indicate which image pairs are part of the train (1) or val (2) dataset.
 """
-function FlyingChairsDataset(root::String; split="trn", gray=false)
+function FlyingChairsDataset(root::String; split="trn", gray=false, flomin=0, flomax=Inf)
 	# get filenames of flows
-	vecfn = filter(x->occursin(".flo", x), readdir("dataset/FlyingChairs/data/"))
+	vecfn = filter(x->occursin(".flo", x), readdir(joinpath(root, "data")))
 	# get numbers within filenames
 	vecindex = map(x->parse(Int, SubString(x, 1:5)), vecfn)
 
 	# get training or val subset
 	if split ∈ ("trn", "val")
-		trn_val = readdlm(joinpath(root, "train_val.txt"), Int)[:,1] .== (split=="trn" ? 1 : 2)
-		vecindex = vecindex[trn_val]
+		keep = readdlm(joinpath(root, "train_val.txt"), Int)[:,1] .== (split=="trn" ? 1 : 2)
+	else
+		keep = ones(length(vecindex))
 	end
+
+	# take subset defined by train_val split and flow magnitude min-max requirements
+	stats = DataFrame(load(joinpath(root, "stats.csv")))
+	keep = keep .* (stats.min .> flomin) .* (stats.max .< flomax) .|> Bool
+	vecindex = vecindex[keep]
 
 	# function to get filenames for "img1", "img2", or "flow"
 	getfilenames(name) = begin

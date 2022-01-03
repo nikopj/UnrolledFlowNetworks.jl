@@ -33,7 +33,7 @@ function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; γ=0, β=1, maxit=100,
 	σ = T(0.99)
 
 	# init conv operators
-	W, _ = cdkernel(T) 
+	W, _ = fdkernel(T) 
 	Wd = repeat(W, 1,1,1,2) ./ sqrt(8f0)
 	D  = Conv(Wd; pad=1, groups=2) |> device
 	Dᵀ = ConvTranspose(Wd; pad=1, groups=2) |> device
@@ -58,7 +58,8 @@ function TVL1_BCA(u₀, u₁, λ, v̄=missing, w=missing; γ=0, β=1, maxit=100,
 
 	# image driven regularization
 	α₀ = sqrt.(sum(abs2, ∇u₀, dims=3))
-	E = T.(1 .- sigmoid.(γ.*(α₀ .- β)))
+	# E = T.(1 .- sigmoid.(γ.*(α₀ .- β)))
+	E = 1f0
 
 	k = 0
 	while k == 0 || k < maxit && residual[k] > tol
@@ -194,13 +195,14 @@ function TVL1_VCA(u₀, u₁, λ, v̄=missing, dual_vars=missing; γ=0, β=1, ma
 	return v, (t,s,w), residual[1:k]
 end
 
-function flow_ictf(u₀, u₁, λ, J; retflows=false, maxwarp=0, verbose=true, tolwarp=1e-4, kws...) 
+function flow_ictf(u₀, u₁, λ, J; σ=1, retflows=false, maxwarp=0, verbose=true, tolwarp=1e-4, kws...) 
 	TVL1 = size(u₀,3)==1 ? TVL1_BCA : TVL1_VCA
+	u₀, u₁, preparams = preprocess(u₀, u₁, 2^J)
 
 	device = (u₀ isa CuArray && CUDA.functional()) ? gpu : cpu
 
 	# construct Gaussian pyramid
-	H = ConvGaussian(eltype(u₀); groups=size(u₀,3), stride=2) |> device
+	H = ConvGaussian(eltype(u₀), σ; groups=size(u₀,3), stride=2) |> device
 	pyramid = [(u₀,u₁)]
 	for j∈1:J
 		push!(pyramid, H.(pyramid[j]))
@@ -245,6 +247,6 @@ function flow_ictf(u₀, u₁, λ, J; retflows=false, maxwarp=0, verbose=true, t
 	if retflows
 		return flows
 	end
-	return v̄
+	return unpad(v̄, preparams[2])
 end
 

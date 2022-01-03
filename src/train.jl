@@ -57,20 +57,7 @@ function passthrough!(net, data::Dataloader, training=false; Loss=L1Loss, gt_ini
 	if weight_decay == 0
 		penalty = ()->0
 	else
-		penalty = ()-> begin 
-			local loss
-			loss = zero(Float32)
-			for j ∈ 0:net.J
-				for w ∈ 0:net.W
-					for k ∈ 1:net.K
-						loss += sum(abs2, net[j+1,w+1].A[k].weight) + sum(abs2, net[j+1,w+1].Bᵀ[k].weight)
-					end
-					net.shared_iter && break
-				end
-				net.shared_scale && break
-			end
-			return loss
-		end
+		penalty = ()-> weight_decay * weight_decay_penalty(net)
 	end
 
 	for (i,F) ∈ enumerate(data)
@@ -80,7 +67,7 @@ function passthrough!(net, data::Dataloader, training=false; Loss=L1Loss, gt_ini
 			∇L = gradient(Θ) do
 				flows = net(F.frame0, F.frame1, J; v̄= gt_init ? F.flows[J+1] : missing, stopgrad=stopgrad, retflows=true)
 				wdpen = penalty()
-				ρ = PiLoss(Loss, α, β, flows, F.flows, use_mask ? F.masks : missing) + weight_decay*wdpen 
+				ρ = PiLoss(Loss, α, β, flows, F.flows, use_mask ? F.masks : missing) + wdpen 
 			end
 			clip_total_gradnorm!(∇L, clipnorm)
 			total_gnorm = verbose ? gradnorm(∇L) : 0
@@ -92,7 +79,7 @@ function passthrough!(net, data::Dataloader, training=false; Loss=L1Loss, gt_ini
 		end
 
 		if isnan(ρ) #|| ρ > 1e3
-			@warn "passthrough!: NaN or large (>100) loss encountered"
+			@warn "passthrough!: NaN encountered"
 			return NaN
 		end
 
@@ -110,10 +97,12 @@ function passthrough!(net, data::Dataloader, training=false; Loss=L1Loss, gt_ini
 			break
 		end
 
-		CUDA.unsafe_free!(F.frame0)
-		CUDA.unsafe_free!(F.frame1)
-		CUDA.unsafe_free!.(F.flows)
-		CUDA.unsafe_free!.(F.masks)
+		if device == Flux.gpu
+			CUDA.unsafe_free!(F.frame0)
+			CUDA.unsafe_free!(F.frame1)
+			CUDA.unsafe_free!.(F.flows)
+			CUDA.unsafe_free!.(F.masks)
+		end
 	end
 	return ρ⃗
 end
@@ -124,13 +113,27 @@ function PiLoss(Loss::Function, α::T, β::T, flows, flows_gt, masks) where {T <
 	loss = 0
 	for j=0:J, w=0:W
 		M = ismissing(masks) ? 1 : masks[j+1]
-		loss = loss + α^(-j)*β^(-W+w)*Loss(flows[j+1,w+1], flows_gt[j+1], M)
+		loss = loss + α^j*β^(W-w)*Loss(flows[j+1,w+1], flows_gt[j+1], M)
 	end
 	return loss 
 end
 PiLoss(f, α::Real, β::Real, args...) = PiLoss(f, Float32(α), Float32(β), args...)
 EPELoss(x,y,M) = mean(√, sum(abs2, M.*(x-y), dims=3) .+ 1f-7)
 L1Loss(x,y,M)  = mean(abs, M.*(x-y))
+
+function weight_decay_penalty(net)
+	loss = zero(Float32)
+	for j ∈ 0:net.J
+		for w ∈ 0:net.W
+			for k ∈ 1:net.K
+				loss += sum(abs2, net[j+1,w+1].A[k].weight) + sum(abs2, net[j+1,w+1].Bᵀ[k].weight)
+			end
+			net.shared_iter && break
+		end
+		net.shared_scale && break
+	end
+	return loss
+end
 
 function train!(net, loaders, opt; epochs=1, Δval=5, start=1, savedir="./", verbose=true, δ=0.5, γ=0.99, Δsched=1, device=identity, kws...)
 	@assert δ > 1 "Backtracking multiplier δ=$δ must be greater than 1."

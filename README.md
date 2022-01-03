@@ -44,3 +44,4 @@ your own networks.
 	- sigmoid weighted smoothness
 - verify @ein is not falling back to loop implementation on GPU
 	- use tullio.jl?
+- make FlowSample and FlowSamplePyramid Structs with type decoration
