@@ -44,3 +44,6 @@ your own networks.
 	- sigmoid weighted smoothness
 - verify @ein is not falling back to loop implementation on GPU
 	- use tullio.jl?
+- good intermediate flows?
+	- test PiLoss alpha
+	- train separete BCANet at small scales

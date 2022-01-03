@@ -1,9 +1,7 @@
 loop:
-  Loss: ["EPE", "L1"]
-  η: [1e-3, 1e-4]
-  weight_decay: [1e-4, 0] 
-  classical_init: [true, false]
-name: "PiBCANet-tanh_init_decay_loss_lr"
+  α: [0.5, 0.75, 0.9, 1, 2]
+  Δsched: [100, 50]
+name: "PiBCANet-alpha_sched"
 version0: 1
 args:
   opt:
@@ -19,9 +17,9 @@ args:
     α: 1
     Δval: 5
     epochs: 1000
-    Δsched: 200
-    δ: 1.5
-    weight_decay: 1e-4
+    Δsched: 100
+    δ: 1e3
+    weight_decay: 1e-5
     use_mask: false
     gt_init: false
     maxiter: 100
