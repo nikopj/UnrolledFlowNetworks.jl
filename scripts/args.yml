@@ -1,11 +1,11 @@
 opt:
   η: 1e-3
 train:
-  α: 0.5
+  α: 1
   Δval: 5
   Δsched: 10
   clipvalue: 1.0
-  weight_decay: 1e-5
+  weight_decay: 5e-5
   verbose: true
   δ: 1.5
   clipnorm: false
@@ -26,9 +26,9 @@ net:
   P: 5
   M: 8
   s: 1
-  W: 0
-  J: 0
-  K: 10
+  W: 1
+  J: 5
+  K: 20
   λ₀: 1e-1
 data:
   dataset: "FlyingChairs"
