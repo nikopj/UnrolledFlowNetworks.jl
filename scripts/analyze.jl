@@ -3,11 +3,12 @@ analyze.jl
 =#
 
 using UnrolledFlowNetworks, Flux, FileIO
+using DrWatson
 import UnrolledFlowNetworks as ufn
 using Printf
 include("visual.jl")
 
-fn = isinteractive() ? "models/PiBCANet-alpha_sched-1b/args.yml" : ARGS[1]
+fn = isinteractive() ? "models/PiBCANet-scale=5_J=0_flomax_cs_K-3b/args.yml" : ARGS[1]
 args = loadargs(fn)
 save_dir = dirname(fn)
 
@@ -16,10 +17,10 @@ ckpt = load(joinpath(save_dir, "net.bson"))
 net = ckpt[:net]
 @show net
 
-train_plot = false
-weights = false
+train_plot = true
+weights = true
 thresholds = true
-passthrough = false
+passthrough = true
 
 if train_plot
 	fn = joinpath(save_dir, "training.png")
@@ -79,7 +80,7 @@ function PT(u0, u1, vgt; name="", save_dir=".")
 
 	fn = joinpath(save_dir, "passthrough", "$(name)_compare.png")
 	visplot(tensor2img(u), vhat_c, vgt_c; titles=titles)
-	save(fn, current_figure())
+	safesave(fn, current_figure())
 
 	println("Running $name passthrough with retflows...")
 	vgtp = begin
@@ -115,7 +116,7 @@ function PT(u0, u1, vgt; name="", save_dir=".")
 	visplot(netflows_c...; fig=F[:,end+1], titles=titles, grid_shape=(net.J+1, net.W+1), link=false)
 	visplot(pyflowgt_c...; link=false, fig=F[:,end+1])
 	fn = joinpath(save_dir, "passthrough", "$(name)_flows_compare.png")
-	save(fn, current_figure())
+	safesave(fn, current_figure())
 	return netflows
 end
 
@@ -124,7 +125,11 @@ if passthrough
 	u0 = tensorload("dataset/MPI_Sintel/training/clean/shaman_2/frame_0048.png", gray=true)
 	u1 = tensorload("dataset/MPI_Sintel/training/clean/shaman_2/frame_0049.png", gray=true)
 	vgt= tensorload("dataset/MPI_Sintel/training/flow/shaman_2/frame_0048.flo")
-	PT(u0,u1,vgt; name="shaman248", save_dir=save_dir)
+	scale = args[:data][:dl_params][:scale]
+	u0 = get_pyramid(u0, scale)[end]
+	u1 = get_pyramid(u1, scale)[end]
+	vgt= get_pyramid(vgt,scale)[end] / 2^scale
+	PT(u0,u1,vgt; name="shaman248_scale=$scale", save_dir=save_dir)
 
 	ds = FlyingChairsDataset("dataset/FlyingChairs"; split="val", args[:data][:ds_params]...)
 	dl = Dataloader(ds, false; batch_size=1, J=net.J, scale=args[:data][:dl_params][:scale])
