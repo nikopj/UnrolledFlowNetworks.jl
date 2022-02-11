@@ -1,31 +1,34 @@
 module UnrolledFlowNetworks
 
-using Interpolations, OMEinsum, FFTW
-using Flux, NNlib, NNlibCUDA, Statistics, CUDA, LinearAlgebra, Zygote
-using Flux.Optimise: Optimiser, ClipValue, ADAM, update!
-using LazyGrids
-using Images, Printf, FileIO
-using CSV, CSVFiles, BSON, DataFrames
-import YAML
-using DrWatson, MosaicViews
-import ProgressMeter as meter
-using Base.Iterators: partition
-using Random: shuffle
-using DelimitedFiles
+using Flux
+using CUDA
+using NNlib
+using Statistics
+using Zygote
 
-include("utils.jl")
-export loadargs, saveargs, warp_bilinear, ConvGaussian, ConvSobel, setrecursive!, get_pyramid
+include("utils/Utils.jl")
+using .Utils
+export loadargs, saveargs, awgn
+export warp_bilinear, pyramid, ConvGaussian, ConvGradient
+
+include("visual.jl")
+using .Visual
+export visplot
+
+include("data/Data.jl")
+using .Data
+export tensor2img, img2tensor, tensorload
+export FlyingChairsDataSet, augment
+
+include("train/Train.jl")
+using .Train
+export passthrough!, train!, AEELoss, L1Loss
 
 include("solvers.jl")
-export flow_ictf
-
-include("data.jl")
-export tensorload, tensor2img, img2tensor, colorflow, FlyingChairsDataset, MPISintelDataset, Dataloader
+using .Solvers
+export flow_ictf, powermethod
 
 include("networks.jl")
-export BCANet, PiBCANet
+export PiBCANet
 
-include("train.jl")
-export passthrough!, train!, PiLoss, EPELoss, L1Loss
-
-end # module
+end

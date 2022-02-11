@@ -1,36 +1,42 @@
 loop:
-  α: [0.5, 0.75, 0.9, 1, 2]
-  Δsched: [100, 50]
-name: "PiBCANet-alpha_sched"
-version0: 1
+  flomax: [32, 512]
+  freeze: [true, false]
+name: "PiBCANet-freeze_flomax_warps=1_scales=6"
+version_num: 1
 args:
+  progressive: true
+  ckpt: 
   opt:
     η: 1e-3
   train:
-    savedir: 
-    γ: 0.5
-    clipnorm: false
-    clipvalue: 1.0
-    stopgrad: true
+    epochs: 10
+    Δval: 5 
+    Δsched: 10 
+    savedir: "models/PiBCANet-freeze_flowmax_warps=1_scales=6" 
     verbose: false
-    β: 1.25
-    α: 1
-    Δval: 5
-    epochs: 1000
-    Δsched: 100
-    δ: 1e3
-    weight_decay: 1e-5
-    use_mask: false
-    gt_init: false
+    δbacktrack: 2
+    δsched: 0.5
+    Loss: "L1" 
+    gtinit: false 
+    γ: 1e-6         # weight decay
+    α: 0.5          # scale piloss factor
+    β: 0.8          # warp piloss factor
+    σ: 1e-3         # noise-level
+    batchsize: 8
+    resolution: 1   # 1 is no downscale, >1 is downscaling
+    verbose: true 
+    clipnorm: false 
+    clipvalue: 1 
+    stopgrad: true 
+    usemask: false 
     maxiter: 100
-    Loss: "EPE"
-  ckpt: 
+    freeze: true
   net:
     classical_init: false
-    W: 0          # Warps per scale
-    shared_iter: false 
+    warps: 1      # Warps per scale
+    shared_warp: false 
     shared_scale: false
-    J: 5
+    scales: 6
     K: 20         # itrs per module
     M: 16         # num filters
     P: 5          # filter side length
@@ -39,12 +45,8 @@ args:
   data:
     dataset: "FlyingChairs"
     root: "dataset/FlyingChairs/"
-    ds_params:
+    params:
       gray: true
-      flomax: 512
-    dl_params:
-      σ: [1e-3, 5e-1]
-      batch_size: 8
-      J: 5
-      crop_size: 256
-      scale: 0
+      flomax: 32
+    augment:
+      cropsize: [384, 384]

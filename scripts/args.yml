@@ -1,44 +1,45 @@
 opt:
   η: 1e-3
 train:
-  α: 1
-  Δval: 5
-  Δsched: 10
-  clipvalue: 1.0
-  weight_decay: 5e-5
-  verbose: true
-  δ: 1.5
-  clipnorm: false
-  β: 1.25
-  savedir: "models/PiBCANet-test"
-  γ: 0.95
-  stopgrad: true
-  epochs: 20
-  use_mask: false
-  gt_init: false
+  epochs: 10
+  Δval: 5 
+  Δsched: 10 
+  savedir: "models/PiBCANet-test" 
+  verbose: true 
+  δbacktrack: 2
+  δsched: 0.5
+  Loss: "AEELoss" 
+  gtinit: false 
+  γ: 1e-5        # weight decay
+  α: 2           # scale piloss factor
+  β: 10          # warp piloss factor
+  σ: 1e-3        # noise-level
+  batchsize: 2
+  resolution: 3      # training resolution
+  verbose: true 
+  clipnorm: false 
+  clipvalue: 1 
+  stopgrad: true 
+  usemask: false 
   maxiter: 50
-  Loss: "EPE"
-ckpt: 
+  freeze: true
+ckpt: "models/PiBCANet-test/net.bson"
 net:
   classical_init: false
-  shared_iter: false
+  shared_warp: false
   shared_scale: false
   P: 5
   M: 8
   s: 1
-  W: 1
-  J: 5
-  K: 20
-  λ₀: 1e-1
+  warps: 2
+  scales: 3
+  K: 10
+  λ₀: 1e-2
 data:
   dataset: "FlyingChairs"
   root: "dataset/FlyingChairs/"
-  ds_params:
+  params:
     gray: true
     flomax: 32
-  dl_params:
-    σ: [1e-3, 5e-1]
-    batch_size: 2
-    J: 0
-    crop_size: 256
-    scale: 5
+  augment:
+    cropsize: [384, 384]

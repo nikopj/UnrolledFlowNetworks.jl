@@ -1,5 +1,11 @@
-using UnrolledFlowNetworks, Flux, CUDA, FileIO
+using UnrolledFlowNetworks
+using Flux, CUDA
+using FileIO
+
 CUDA.allowscalar(false)
+device = CUDA.functional() ? begin @info "Using GPU."; gpu end : cpu
+
+γ
 
 # get argument filename and device
 if isinteractive()
@@ -7,54 +13,45 @@ if isinteractive()
 else
 	fn = ARGS[1]
 end
-device = CUDA.functional() ? begin @info "Using GPU."; gpu end : cpu
 
 args = loadargs(fn)
 println(args)
 mkpath(args[:train][:savedir])
 
 # instantiate network
-loadingckpt = args[:ckpt] ≠ nothing && isfile(args[:ckpt])
+loadingckpt = !isnothing(args[:ckpt]) && isfile(args[:ckpt])
 net = PiBCANet(; args[:net]..., lipschitz_init=!loadingckpt) |> device
 @show net
 
 # instantiate optimizer
 opt = ADAM(args[:opt][:η]) |> device
 
-# load data
-dstype = args[:data][:dataset]
-if dstype == "FlyingChairs"
-	TheDataset = FlyingChairsDataset
-elseif dstype == "MPI-Sintel"
-	TheDataset = MPISintelDataset
-else
-	@error "Dataset $dstype not implemented."
-end
-# @warn "NOT LOADING DATASETS. Change before submitting jobs."
-ds_trn = TheDataset(args[:data][:root]; split="trn", args[:data][:ds_params]...)
-ds_val = TheDataset(args[:data][:root]; split="val", args[:data][:ds_params]...)
-ds_tst = MPISintelDataset("dataset/MPI_Sintel"; split="all", gray=args[:data][:ds_params][:gray])
-
-# ensure nosie-level range is given as tuple
-if args[:data][:dl_params][:σ] isa Vector
-	args[:data][:dl_params][:σ] = tuple(args[:data][:dl_params][:σ]...)
-end
-
-# build dataloaders
-dl_trn = Dataloader(ds_trn, true; args[:data][:dl_params]..., device=device)
-dl_val = Dataloader(ds_val, false; batch_size=1, J=args[:data][:dl_params][:J], scale=args[:data][:dl_params][:scale], device=device)
-dl_tst = Dataloader(ds_tst, false; batch_size=1, J=args[:data][:dl_params][:J], scale=args[:data][:dl_params][:scale], device=device)
-loaders = (trn=dl_trn, val=dl_val, tst=dl_tst)
-@show loaders
-
+# load checkpoint
 start = 1
 if loadingckpt
 	@info "Loading checkpoint $(args[:ckpt])..."
 	ckpt = load(args[:ckpt])
-	net     = ckpt[:net] |> device
-	start   = ckpt[:epoch] + 1
-	opt.eta = ckpt[:η]
+	net′     = ckpt[:net] |> device
+	if net′ isa typeof(net)
+		@info "ckpt-net is of same type: continuing training..."
+		net = net′
+		start   = ckpt[:epoch] + 1
+		opt.eta = ckpt[:η]
+	else
+		@assert sum(net′.warps) == sum(net.warps) - 1 "ckpt-net must have 1 fewer BCANet modules than net!"
+		@info "ckpt-net is of different type: loading weights into larger model..."
+		d = net.scales - net′.scales
+		for j in 1:net′.scales, w in 1:net′.warps[j]
+			net.netarr[d+j][w] = deepcopy(net′[j][w])
+		end
+		net.netarr[1][end] = deepcopy(net′[1][end])
+	end
 end
+
+# load data
+dstrn = FlyingChairsDataSet(args[:data][:root], augment(;args[:data][:augment]...); split=:trn, args[:data][:params]...)
+dsval = FlyingChairsDataSet(args[:data][:root]; split=:val, args[:data][:params]...)
+@show dstrn.name, dsval.name
 
 # save updated argument file
 args[:ckpt] = joinpath(args[:train][:savedir], "net.bson")
@@ -64,11 +61,11 @@ saveargs(fn, args)
 lossfcn = args[:train][:Loss]
 if occursin("L1", lossfcn)
 	args[:train][:Loss] = L1Loss
-elseif occursin("EPE", lossfcn)
-	args[:train][:Loss] = EPELoss
+elseif occursin("AEE", lossfcn)
+	args[:train][:Loss] = AEELoss
 else
-	@error "Dataset $lossfcn not implemented."
+	@error "Loss function $lossfcn not implemented."
 end
 
-train!(net, loaders, opt; start=start, device=device, args[:train]...)
+train!(net, (trn=dstrn, val=dsval), opt; start=start, device=device, args[:train]...)
 

@@ -1,7 +1,12 @@
-using GLMakie; GLMakie.WINDOW_CONFIG.vsync[] = false
+module Visual
+
+using GLMakie
 using DataFrames
 using FileIO
 using Images
+using MosaicViews
+
+export visplot
 
 function training_curves(save_dir)
 	dfload(fn) = begin 
@@ -128,3 +133,4 @@ function batch_mosaicview(A::Array{T,4}; kws...) where T
 	cat([mosaicview(selectdim(A,3,i); kws...) for i=1:size(A,3)]..., dims=3)
 end
 
+end

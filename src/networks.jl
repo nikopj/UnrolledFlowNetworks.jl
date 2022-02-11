@@ -1,7 +1,3 @@
-#=
-networks.jl
-=#
-
 #=============================================================================
                               Definitions 
 =============================================================================#
@@ -12,7 +8,7 @@ struct BCANet{K,C,Cᵀ,T,S,R}
 	τ::S             # log-domain primal step-size
 	λ::NTuple{K,T}   # log-domain lagrange multiplier
 	K::Int           # iterations
-	M::Int           # number of filters / 2
+	M::Int           # number of filters 
 	P::Int           # filter size (square side-length)
 	s::Int           # conv stride
 	∇::R             # spatial gradient operator
@@ -20,29 +16,32 @@ end
 Flux.@functor BCANet
 Flux.trainable(n::BCANet) = (n.A,n.Bᵀ,n.λ,n.τ)
 
-struct PiBCANet{N, C}
-	net::Matrix{N}
+struct PiBCANet{B,C}
+	netarr::Vector{Vector{B}}
 	H::C
 end
 Flux.@functor PiBCANet
-Flux.trainable(πn::PiBCANet) = (πn.net)
+Flux.trainable(πn::PiBCANet) = (πn.netarr)
 
 # aliases 
+Base.getindex(πn::PiBCANet, i::Int, j::Int) = πn.netarr[i][j]
+Base.getindex(πn::PiBCANet, i::Int) = πn.netarr[i]
+
 function Base.getproperty(πn::PiBCANet, s::Symbol) 
-	if s == :W
-		return size(πn.net,2) - 1
-	elseif s == :J
-		return size(πn.net,1) - 1
-	elseif s == :shared_iter
-		return πn.net[1,1] == πn.net[1,end]
+	if s == :scales
+		return length(πn.netarr)
+	elseif s == :warps
+		return length.(πn.netarr)
+	elseif s == :shared_warp
+		return all([all([πn[i,1] == πn[i,j] for j=1:πn.warps[i]]) for i=1:πn.scales])
 	elseif s == :shared_scale
-		return πn.net[1,1] == πn.net[end,1]
+		return all(πn.warps .== πn.warps[1]) && 
+		all([all([πn[1,j] == πn[i,j] for i=1:πn.scales]) for j=1:πn.warps[1]])
 	elseif s ∈ [:K, :M, :P, :s]
-		return getfield(πn.net[1], s)
+		return getfield(πn[1,1], s)
 	end
 	return getfield(πn,s)
 end
-Base.getindex(πn::PiBCANet, k...) = πn.net[k...]
 
 #=============================================================================
                               Constructors 
@@ -86,46 +85,57 @@ function BCANet(;K::Int=10, M::Int=16, P::Int=7, s::Int=1, λ₀=1f-1, W₀=miss
 	λ  = ntuple(i->Float32(log(λ₀))*ones(Float32,1,1,M,1), K)
 
 	# spatial gradient operator (non learned)
-	∇ = Conv(sobelkernel()[1], false; pad=1)
+	∇ = ConvGradient()
 
 	return BCANet(A, Bᵀ, τ, λ, K, M, P, s, ∇)
 end
 
-function PiBCANet(; J=0, W=0, shared_iter::Bool=true, shared_scale::Bool=true, lipschitz_init=true, kws...)
-	net  = Matrix{BCANet}(undef, (J+1, W+1))
-	net[1,1] = BCANet(; kws..., lipschitz_init=lipschitz_init)
-	W₀ = net[1,1].A[1].weight
+function PiBCANet(; scales::Int=1, warps::Union{Tuple,Vector,Int}=1, shared_warp::Bool=false, shared_scale::Bool=false, lipschitz_init=true, kws...)
+	if warps isa Int
+		warps = repeat([warps], scales)
+	end
+	@assert length(warps) == scales "warps indicates # warps-per-scales"
 
-	if shared_iter && shared_scale
-		for j=0:J, w=0:W; net[j+1,w+1] = net[1,1]; end
-	elseif shared_iter && !shared_scale
-		for j=0:J
-			net[j+1,1] = BCANet(; kws..., W₀=copy(W₀), lipschitz_init=false)
-			for w=1:W; net[j+1,w+1] = net[j+1,1]; end
+	# initialize network-array example network
+	netarr  = Vector{Vector{BCANet}}(undef, scales)
+	net1 = BCANet(; kws..., lipschitz_init=lipschitz_init)
+	W₀ = net1.A[1].weight
+
+	if shared_warp && shared_scale
+		netvec = [net1 for w=1:warps[1]] 
+		for j=1:scales
+			netarr[j] = netvec
 		end
-	elseif !shared_iter && shared_scale
-		@error "Not Implemented"
-	elseif !shared_iter && !shared_scale
-		for j=0:J, w=0:W
-			net[j+1,w+1] = BCANet(; kws..., W₀=copy(W₀), lipschitz_init=false)
+	elseif shared_warp && !shared_scale
+		for j=1:scales
+			net1 = BCANet(; kws..., W₀=copy(W₀), lipschitz_init=false)
+			netarr[j] = [net1 for w=1:warps[j]] 
+		end
+	elseif !shared_warp && shared_scale
+		netvec = [BCANet(; kws..., W₀=copy(W₀), lipschitz_init=false) for w=1:warps[1]]
+		for j=1:scales
+			netarr[j] = netvec
+		end
+	elseif !shared_warp && !shared_scale
+		for j=1:scales
+			netarr[j] = [BCANet(; kws..., W₀=copy(W₀), lipschitz_init=false) for w=1:warps[j]]
 		end
 	end
 
-	H = ConvGaussian(stride=2)
-	return PiBCANet(net, H)
+	H = ConvGaussian(; stride=2)
+	return PiBCANet(netarr, H)
 end
 
 #=============================================================================
                              Forward Method 
 =============================================================================#
-ST(x,τ) = sign(x)*min(zero(Float32), abs(x)-τ) # shrinkage-thresholding
 softST(x,τ) = x - τ*tanh(x/τ)                  # soft/differentiable ST
 softclip(x,τ) = τ*tanh(x/τ)                    # soft/differentiable clipping
 
 # Unrolled TVL1-BCA forward pass
-function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
-	∇u = net.∇(u₁)
-	b  = u₁ - u₀ - sum(∇u.*v̄, dims=3)
+function (net::BCANet)(u₁::T, u₂::T, v̄::T, w::T) where T <: AbstractArray
+	∇u = net.∇(u₂)
+	b  = u₂ - u₁ - sum(∇u.*v̄, dims=3)
 	α  = sum(abs2, ∇u, dims=3) .+ 1f-7
 	a  = ∇u ./ α
 	v  = v̄
@@ -141,75 +151,99 @@ function (net::BCANet)(u₀::T, u₁::T, v̄::T, w::T) where T <: AbstractArray
 	return v, w
 end
 
-function (πnet::PiBCANet)(u₀, u₁, J::Int; v̄=missing, stopgrad=false, retflows=false)
-	u₀, u₁, preparams = preprocess(u₀, u₁, 2^(J+πnet.s÷2))
+function (πnet::PiBCANet)(u₁, u₂, v̄=missing; stopgrad=false, retflows=false)
+	local v
+	u₁, u₂, preparams = preprocess(u₁, u₂, πnet.scales)
 
-	# construct Gaussian pyramid
-	pyramid = Matrix{typeof(u₀)}(undef, (J+1,2))
-	Zygote.ignore() do 
-		pyramid[1,:] = [u₀, u₁]
-		for j ∈ 1:J
-			pyramid[j+1,:] = πnet.H.(pyramid[j,:])
-		end
-	end
-	
 	# construct flow buffer to store and return intermediate flows
 	if retflows
-		flows = Zygote.Buffer(Matrix{typeof(u₀)}(undef, (J+1,πnet.W+1)))
+		flows = [Zygote.Buffer(Vector{typeof(u₁)}(undef, πnet.warps[j])) for j in 1:πnet.scales]
+	end
+
+	# construct Gaussian pyramid
+	img_pyramid = Zygote.ignore() do 
+		(pyramid(u₁, πnet.scales, πnet.H), pyramid(u₂, πnet.scales, πnet.H))
 	end
 
 	# init variables
 	# use similar to init with CuArrays of on CUDA
-	M, N, _, B = size(pyramid[end, 1])
+	m, n, _, B = size(img_pyramid[1][end])
 	if ismissing(v̄)
-		v̄ = similar(u₀, eltype(u₀), (M, N, 2, B))
+		v̄ = similar(u₁, eltype(u₁), (m, n, 2, B))
 		Zygote.ignore() do
 			fill!(v̄,0)
 		end
 	end
-	dual_var = similar(u₀, eltype(u₀), (M÷πnet.s, N÷πnet.s, πnet.M, B))
+	dualvar = similar(u₁, eltype(u₁), (m÷πnet.s, n÷πnet.s, πnet.M, B))
 	Zygote.ignore() do
-		fill!(dual_var,0)
+		fill!(dualvar,0)
 	end
-	v = nothing
 
-	for j ∈ J:-1:0
-		u₀, u₁ = pyramid[j+1,:]
-		for w ∈ 0:πnet.W
-			ū₁ = (j==J && w==0) ? u₁ : warp_bilinear(u₁, stopgrad ? Zygote.dropgrad(v̄) : v̄)
-			v, dual_var = πnet[j+1, w+1](u₀, ū₁, v̄, dual_var)
-			v̄ = v
+	# coarse to fine
+	for j ∈ πnet.scales:-1:1
+		u₁, u₂ = img_pyramid[1][j], img_pyramid[2][j]
+
+		# iterative warping
+		for w ∈ 1:πnet.warps[j]
+			ū₂ = warp_bilinear(u₂, stopgrad ? Zygote.dropgrad(v̄) : v̄)
+			v, dualvar = πnet[j,w](u₁, ū₂, v̄, dualvar)
+
 			if retflows
-				flows[j+1,w+1] = v
+				flows[j][w] = v
 			end
+			v̄ = v
 		end
-		if j > 0
+
+		# upscale flow and dual variables to finer scale
+		if j > 1
 			v̄ = 2*upsample_bilinear(v̄, (2,2))
-			dual_var = 2*upsample_bilinear(dual_var, (2,2))
+			dualvar = 2*upsample_bilinear(dualvar, (2,2))
 		end
 	end
 
 	if retflows
-		return copy(flows)
+		return [copy(flows[j]) for j in 1:πnet.scales]
 	end
-	return unpad(v, preparams[2])
+	return postprocess(v, preparams)
 end
+
+function Train.weight_decay_penalty(net::PiBCANet)
+	loss = zero(Float32)
+	for j ∈ 1:net.scales
+		for w ∈ 1:net.warps[j]
+			loss += Train.weight_decay_penalty(net[j,w])
+			net.shared_warp && break
+		end
+		net.shared_scale && break
+	end
+	return loss
+end
+function Train.weight_decay_penalty(net::BCANet)
+	loss = zero(Float32)
+	for k ∈ 1:net.K
+		loss += sum(abs2, net.A[k].weight) + sum(abs2, net.Bᵀ[k].weight)
+	end
+	return loss
+end
+
 
 #=============================================================================
                                   Projection 
 =============================================================================#
 
-Π!(t::AbstractArray) = clamp!(t, 0, Inf)
-function Π!(c::Union{Conv,ConvTranspose})
+project!(t::AbstractArray) = clamp!(t, 0, Inf)
+function project!(c::Union{Conv,ConvTranspose})
 	c.weight ./= max.(1, sqrt.(sum(abs2, c.weight, dims=(1,2))))
 	return nothing
 end
-function Π!(n::BCANet)
-	Π!.((n.A..., n.Bᵀ...))
+function project!(n::BCANet)
+	project!.((n.A..., n.Bᵀ...))
 	return nothing
 end
-function Π!(πn::PiBCANet)
-	Π!.(πn.net)
+function Train.project!(πn::PiBCANet)
+	for j in 1:πn.scales
+		project!.(πn[j])
+	end
 	return nothing
 end
 
@@ -218,7 +252,10 @@ end
 =============================================================================#
 
 function Base.show(io::IO, n::BCANet)
-	print(io, "BCANet(K=", n.K, ", M=",n.M, ", P=", n.P, ", s=", n.s, ")")
+	print(io, "BCANet(K=", n.K, 
+	          ", M=",n.M, 
+	          ", P=", n.P, 
+	          ", s=", n.s, ")")
 	nps = sum(length, params(n)); nps_unit = ""
 	if nps > 1000
 		nps = nps ÷ 1000
@@ -228,14 +265,18 @@ function Base.show(io::IO, n::BCANet)
 end
 
 function Base.show(io::IO, πn::PiBCANet)
-	print(io, "PiBCANet((J, W)=", size(πn.net) .- 1, ", shared_scale=", πn.shared_scale, ", shared_iter=", πn.shared_iter, ", K=", πn.K, ", M=", πn.M, ", P=", πn.P, ", s=", πn.s, ")")
-	nps = sum(length, params(πn.net[1,1]))
-	if !πn.shared_iter
-		nps *= πn.W+1
-	end
-	if !πn.shared_scale
-		nps *= πn.J+1
-	end
+	print(io, "PiBCANet(scales=", πn.scales, 
+	          ", warps=", πn.warps,
+	          ", shared_scale=", πn.shared_scale, 
+	          ", shared_warp=", πn.shared_warp, 
+	          ", K=", πn.K, 
+	          ", M=", πn.M, 
+	          ", P=", πn.P, 
+	          ", s=", πn.s, ")")
+	# get parameter count
+	nps = length(Flux.destructure(πn)[1])
+
+	# get units
 	nps_unit = ""
 	if nps > 1e6
 		nps = ceil(Int, nps/1e6)
