@@ -12,13 +12,13 @@ args:
     Δval: 1
     Δsched: 50
     savedir: "models/PiBCANet-prgtest" 
-    verbose: false
+    verbose: true
     δbacktrack: 2
     δsched: 0.5
     Loss: "AEE" 
     gtinit: false 
     γ: 1e-6         # weight decay
-    α: 0.5          # scale piloss factor
+    α: 2            # scale piloss factor
     β: 0.8          # warp piloss factor
     σ: 1e-3         # noise-level
     batchsize: 8
@@ -29,7 +29,7 @@ args:
     stopgrad: true 
     usemask: false 
     maxiter: 10
-    freeze: true
+    freeze: false
   net:
     classical_init: false
     warps: 2      # Warps per scale
@@ -48,4 +48,4 @@ args:
       gray: true
       flomax: 32
     augment:
-      cropsize: [384, 384]
+      cropsize: [128, 128]
