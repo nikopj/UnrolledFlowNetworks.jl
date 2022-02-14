@@ -1,29 +1,29 @@
 opt:
   η: 1e-3
 train:
-  epochs: 10
-  Δval: 5 
-  Δsched: 10 
+  epochs: 1
+  Δval: 1
+  Δsched: 1
   savedir: "models/PiBCANet-test" 
   verbose: true 
   δbacktrack: 2
   δsched: 0.5
-  Loss: "AEELoss" 
+  Loss: "L1" 
   gtinit: false 
   γ: 1e-5        # weight decay
   α: 2           # scale piloss factor
-  β: 10          # warp piloss factor
+  β: 0.9          # warp piloss factor
   σ: 1e-3        # noise-level
-  batchsize: 2
-  resolution: 3      # training resolution
+  batchsize: 8
+  resolution: 2      # training resolution
   verbose: true 
   clipnorm: false 
   clipvalue: 1 
-  stopgrad: true 
+  stopgrad: false 
   usemask: false 
   maxiter: 50
-  freeze: true
-ckpt: "models/PiBCANet-test/net.bson"
+  freeze: false
+ckpt:
 net:
   classical_init: false
   shared_warp: false
@@ -32,7 +32,7 @@ net:
   M: 8
   s: 1
   warps: 2
-  scales: 3
+  scales: 5
   K: 10
   λ₀: 1e-2
 data:

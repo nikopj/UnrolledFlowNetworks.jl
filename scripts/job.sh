@@ -1,17 +1,19 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=1
-#SBATCH --time=46:00:00
-#SBATCH --mem=6GB
-#SBATCH --array=11-12
-#SBATCH --job-name=PiBCANet-alpha_sched-b
+#SBATCH --time=1:00:00
+#SBATCH --mem=8GB
+#SBATCH --job-name=PiBCANet-prgtest-1-c
 #SBATCH --mail-type=END
 #SBATCH --mail-user=npj226@nyu.edu
-#SBATCH --output=slurm.d/PiBCANet-alpha_sched-%ab.out
-#SBATCH --error=slurm.d/PiBCANet-alpha_sched-%ab.err
+#SBATCH --output=slurm.d/PiBCANet-prgtest-1-c.out
+#SBATCH --error=slurm.d/PiBCANet-prgtest-1-c.err
 
 module load julia/1.6.1
 cd /scratch/npj226/UnrolledFlowNetworks
-julia --project=. scripts/fit.jl args.d/PiBCANet-alpha_sched-${SLURM_ARRAY_TASK_ID}b.yml
+for ((i=1; i<=4; i++)); do
+	echo "-------------------- PROG TEST $i -----------------------"
+	julia --project=. scripts/fit.jl args.d/PiBCANet-prgtest-1-prg${i}c.yml
+done
+

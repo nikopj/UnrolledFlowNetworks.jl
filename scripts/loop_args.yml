@@ -1,7 +1,6 @@
 loop:
-  flomax: [32, 512]
-  freeze: [true, false]
-name: "PiBCANet-freeze_flomax_warps=1_scales=6"
+  freeze: [true]
+name: "PiBCANet-prgtest"
 version_num: 1
 args:
   progressive: true
@@ -9,14 +8,14 @@ args:
   opt:
     η: 1e-3
   train:
-    epochs: 10
-    Δval: 5 
-    Δsched: 10 
-    savedir: "models/PiBCANet-freeze_flowmax_warps=1_scales=6" 
+    epochs: 1
+    Δval: 1
+    Δsched: 50
+    savedir: "models/PiBCANet-prgtest" 
     verbose: false
     δbacktrack: 2
     δsched: 0.5
-    Loss: "L1" 
+    Loss: "AEE" 
     gtinit: false 
     γ: 1e-6         # weight decay
     α: 0.5          # scale piloss factor
@@ -29,14 +28,14 @@ args:
     clipvalue: 1 
     stopgrad: true 
     usemask: false 
-    maxiter: 100
+    maxiter: 10
     freeze: true
   net:
     classical_init: false
-    warps: 1      # Warps per scale
+    warps: 2      # Warps per scale
     shared_warp: false 
     shared_scale: false
-    scales: 6
+    scales: 2
     K: 20         # itrs per module
     M: 16         # num filters
     P: 5          # filter side length

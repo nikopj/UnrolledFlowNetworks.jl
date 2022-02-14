@@ -16,9 +16,10 @@ end
 Flux.@functor BCANet
 Flux.trainable(n::BCANet) = (n.A,n.Bᵀ,n.λ,n.τ)
 
-struct PiBCANet{B,C}
+struct PiBCANet{B,CI,CF}
 	netarr::Vector{Vector{B}}
-	H::C
+	blurimg::CI
+	blurflo::CF
 end
 Flux.@functor PiBCANet
 Flux.trainable(πn::PiBCANet) = (πn.netarr)
@@ -122,8 +123,9 @@ function PiBCANet(; scales::Int=1, warps::Union{Tuple,Vector,Int}=1, shared_warp
 		end
 	end
 
-	H = ConvGaussian(; stride=2)
-	return PiBCANet(netarr, H)
+	Himg = ConvGaussian(; groups=1, stride=2)
+	Hflo = ConvGaussian(; groups=2, stride=2)
+	return PiBCANet(netarr, Himg, Hflo)
 end
 
 #=============================================================================
@@ -162,7 +164,7 @@ function (πnet::PiBCANet)(u₁, u₂, v̄=missing; stopgrad=false, retflows=fal
 
 	# construct Gaussian pyramid
 	img_pyramid = Zygote.ignore() do 
-		(pyramid(u₁, πnet.scales, πnet.H), pyramid(u₂, πnet.scales, πnet.H))
+		(pyramid(u₁, πnet.scales, πnet.blurimg), pyramid(u₂, πnet.scales, πnet.blurimg))
 	end
 
 	# init variables

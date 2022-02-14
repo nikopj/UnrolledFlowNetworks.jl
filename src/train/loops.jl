@@ -16,6 +16,7 @@ function passthrough!(net, data, training=false;
     batchsize=1,
     resolution=1,
     maxiter=Inf,
+    device=identity,
     freeze=false) 
 
 	dataloader = DataLoader(data, batchsize; partial=false)
@@ -58,12 +59,14 @@ function passthrough!(net, data, training=false;
 	# main loop
 	for (i, batch) ∈ enumerate(dataloader)
 		img1, img2, flow, mask = batch
+		img1, img2, flow, mask = (img1, img2, flow, mask) .|> device
 
-		img1 = pyramid(awgn(img1, σ)[1], resolution, net.H)[end]
-		img2 = pyramid(awgn(img2, σ)[1], resolution, net.H)[end]
 
-		pyflow = pyramid(flow, net.scales + resolution - 1)[resolution:end] ./ 2^(net.scales + resolution - 2)
-		pymask = usemask ? pyramid(mask, net.scales + resolution - 1, net.H)[resolution:end] : missing
+		img1 = pyramid(awgn(img1, σ)[1], resolution, net.blurimg)[end]
+		img2 = pyramid(awgn(img2, σ)[1], resolution, net.blurimg)[end]
+
+		pyflow = pyramid(flow, net.scales + resolution - 1, net.blurflo)[resolution:end] ./ 2^(net.scales + resolution - 2)
+		pymask = usemask ? pyramid(mask, net.scales + resolution - 1, net.blurimg)[resolution:end] : missing
 		v̄ = gtinit ? pyflow[end] : missing
 
 		# train or val
@@ -100,8 +103,8 @@ function passthrough!(net, data, training=false;
 			if training
 				push!(values, (:total_gnorm, @sprintf("%.3e",total_gradnorm)))
 				push!(values, (:weight_decay, @sprintf("%.3e", wdpen)))
-				for j in 1:sum(net.warps)
-					push!(values, (:loss, @sprintf(" %.2e ", mean(ρ⃗arr[j,1:i]))))
+				for k in 1:sum(net.warps)
+					push!(values, (Symbol("loss$k"), @sprintf(" %.2e ", mean(ρ⃗arr[k,1:i]))))
 				end
 				push!(values, (:test, @sprintf("πnet[end,1] weights updating...? %.3e", sum(net.netarr[end][1].A[end].weight))))
 				push!(values, (:test, @sprintf("πnet[1,end] weights updating...? %.3e", sum(net.netarr[1][end].A[end].weight))))
@@ -156,7 +159,7 @@ function train!(net, datasets, opt;
 
 			# -- main loop --
 			data = phase==:trn ? shuffleobs(datasets[:trn]) : datasets[:val]
-			ρ⃗, ρ⃗arr = passthrough!(net, data, phase==:trn; opt=opt, desc=desc, verbose=verbose, kws...)
+			ρ⃗, ρ⃗arr = passthrough!(net, data, phase==:trn; opt=opt, desc=desc, verbose=verbose, device=device, kws...)
 
 			ρ̄ = any(isnan.(ρ⃗)) ? NaN : mean(ρ⃗)
 			if any(isnan.(ρ⃗)) || phase==:val 

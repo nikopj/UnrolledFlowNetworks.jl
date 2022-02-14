@@ -44,7 +44,7 @@ function preprocess(x::AbstractArray, y::AbstractArray, scales::Int)
 end
 
 function postprocess(v::AbstractArray, params::NamedTuple)
-	return unpad(v, params.pad) |> collect
+	return unpad(v, params.pad) 
 end
 
 #=============================================================================
@@ -66,7 +66,7 @@ function warp_nearest(img, flow)
 	return dst
 end
 
-function warp_bilinear(img::Array{T,4}, flow) where {T}
+function warp_bilinear(img::AbstractArray{T,4}, flow) where {T}
 	if all(flow .== 0)
 		return img
 	end
@@ -107,7 +107,7 @@ function warp_bilinear(img::Array{T,4}, flow) where {T}
 	return c00.*f00 + c01.*f01 + c10.*f10 + c11.*f11
 end
 
-function warp_bilinear(img::Array{T,3}, flow) where {T}
+function warp_bilinear(img::AbstractArray{T,3}, flow) where {T}
 	return warp_bilinear(img[:,:,:,:], flow)[:,:,:,1]
 end
 

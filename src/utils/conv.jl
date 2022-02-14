@@ -85,7 +85,7 @@ function pyramid(x::AbstractArray, scales::Int, convop)
 end
 
 function pyramid(x::AbstractArray{T,N}, scales::Int, σ::Real=1) where {T,N}
-	H = ConvGaussian(T, σ; groups=size(x,3), stride=2)
+	H = ConvGaussian(x, σ; stride=2)
 	return pyramid(x, scales, H)
 end
 

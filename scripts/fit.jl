@@ -5,8 +5,6 @@ using FileIO
 CUDA.allowscalar(false)
 device = CUDA.functional() ? begin @info "Using GPU."; gpu end : cpu
 
-γ
-
 # get argument filename and device
 if isinteractive()
 	fn = "scripts/args.yml"
@@ -31,7 +29,7 @@ start = 1
 if loadingckpt
 	@info "Loading checkpoint $(args[:ckpt])..."
 	ckpt = load(args[:ckpt])
-	net′     = ckpt[:net] |> device
+	net′ = ckpt[:net] |> device
 	if net′ isa typeof(net)
 		@info "ckpt-net is of same type: continuing training..."
 		net = net′

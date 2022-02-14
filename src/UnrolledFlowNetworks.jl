@@ -11,9 +11,9 @@ using .Utils
 export loadargs, saveargs, awgn
 export warp_bilinear, pyramid, ConvGaussian, ConvGradient
 
-include("visual.jl")
-using .Visual
-export visplot
+# include("visual.jl")
+# using .Visual
+# export visplot
 
 include("data/Data.jl")
 using .Data
